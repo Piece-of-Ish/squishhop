@@ -136,6 +136,10 @@
 
   /* Toasts */
   #toast-container{position:absolute; top:80px; left:0; right:0; display:flex; flex-direction:column; align-items:center; gap:8px; z-index:20; pointer-events:none;}
+  .toast-item{background:var(--card); backdrop-filter:blur(8px); color:var(--ink); font-family:'Fredoka'; font-weight:600; font-size:13px; padding:9px 16px; border-radius:999px; box-shadow:0 6px 16px var(--shadow); max-width:86vw; text-align:center; opacity:0; transform:translateY(-8px); animation:toastIn 0.25s ease-out forwards;}
+  .toast-item.toast-out{animation:toastOut 0.25s ease-in forwards;}
+  @keyframes toastIn{ to{ opacity:1; transform:translateY(0); } }
+  @keyframes toastOut{ to{ opacity:0; transform:translateY(-8px); } }
   .toast{background:linear-gradient(135deg, var(--primary), var(--primary-dark)); color:#fff; font-weight:800; font-size:14px; padding:10px 18px; border-radius:999px; box-shadow:0 6px 16px var(--shadow); opacity:0; transform:translateY(-10px); animation:toastIn 0.35s ease forwards, toastOut 0.4s ease 2.2s forwards;}
   @keyframes toastIn{to{opacity:1; transform:translateY(0);}}
   @keyframes toastOut{to{opacity:0; transform:translateY(-8px);}}
@@ -235,6 +239,7 @@
   .missions-list{width:100%; display:flex; flex-direction:column; gap:10px; max-height:50vh; overflow-y:auto;}
   #missions-list.hidden{display:none;}
   #daily-panel.hidden{display:none;}
+  #weekly-panel.hidden{display:none;}
   .mission-item{background:#fff; border-radius:16px; padding:12px 14px; box-shadow:0 3px 10px rgba(61,43,86,0.10);}
   .mission-top{display:flex; justify-content:space-between; font-weight:800; font-size:13px; margin-bottom:6px;}
   .mission-reward{color:var(--gold-dark); display:flex; align-items:center; gap:4px;}
@@ -403,18 +408,21 @@
     <div class="panel panel-large">
       <h2>Missions</h2>
       <div class="stats-tabs">
-        <button class="tab mission-pool-tab active" data-pool="gold">🪙 Gold</button>
-        <button class="tab mission-pool-tab" data-pool="xp">✨ XP</button>
-        <button class="tab mission-pool-tab" data-pool="daily">🎁 Daily</button>
+        <button class="tab mission-view-tab active" data-mission-view="daily">📅 Daily</button>
+        <button class="tab mission-view-tab" data-mission-view="weekly">🗓 Weekly</button>
+        <button class="tab mission-view-tab" data-mission-view="achievements">🏆 Achievements</button>
       </div>
-      <div id="missions-list" class="missions-list"></div>
       <div id="daily-panel" class="hidden">
         <div class="streak-row" id="streak-row"></div>
         <button class="btn btn-primary" id="daily-claim-btn">Claim</button>
         <button class="btn btn-secondary hidden" id="daily-double-btn">🎬 Watch ad: double it</button>
-        <div class="daily-subhead">Daily Challenges</div>
+        <div class="daily-subhead">Daily Missions</div>
         <div id="daily-challenges" class="missions-list"></div>
       </div>
+      <div id="weekly-panel" class="hidden">
+        <div id="weekly-missions-list" class="missions-list"></div>
+      </div>
+      <div id="missions-list" class="missions-list"></div>
       <button class="btn btn-secondary" id="missions-back-btn">Back</button>
     </div>
   </div>
@@ -489,7 +497,6 @@
       </div>
       <div class="stats-tabs">
         <button class="tab active" data-stats-tab="runs">Runs</button>
-        <button class="tab" data-stats-tab="achievements">Achievements</button>
       </div>
       <div id="stats-content" class="stats-content"></div>
       <button class="btn btn-secondary" id="stats-back-btn">Back</button>
@@ -530,7 +537,7 @@
 // Tracked starting with this release — bump on every future patch, and keep
 // PATCH_NOTES.md in sync with what changed. The deployed filename should
 // match: "SquishHop (Game Version X.X.X).html".
-const GAME_VERSION = '1.0.0';
+const GAME_VERSION = '1.6.0';
 
 /* =============================================================================
    SCRIPT — TABLE OF CONTENTS
@@ -610,16 +617,12 @@ function defaultSave(){
     purchaseLog: [],
     achievements: [],
     totalXP: 0,
-    missionTiers: { height:0, coins:0, springs:0, bounces:0, broken:0 },
-    xpMissionTiers: { height:0, coins:0, springs:0, bounces:0, broken:0 },
-    missions: [],
-    xpMissions: [],
+    achievementStats: { jumps:0, coins:0, runs:0, bestHeight:0, springs:0, broken:0, movingLandings:0 },
+    weeklyMissions: null,
     daily: { lastClaim:'', streak:0, lastAmount:0, doubledToday:false, challenges:null },
     premium: { removeAds:false },
     settings: { sensitivity:5, gameVolume:80, sfxVolume:80, gameMuted:false, sfxMuted:false, tiltControls:true }
   };
-  draft.missions = MISSION_BAND_ORDER.map(band => makeMission(band, 'gold', draft));
-  draft.xpMissions = MISSION_BAND_ORDER.map(band => makeMission(band, 'xp', draft));
   return draft;
 }
 
@@ -630,8 +633,6 @@ async function loadSave(){
   try{
     const r = await window.storage.get(SAVE_KEY);
     save = r && r.value ? JSON.parse(r.value) : defaultSave();
-    if(!save.missionTiers){ save.missionTiers = { height:0, coins:0, springs:0, bounces:0, broken:0 }; }
-    if(!save.xpMissionTiers){ save.xpMissionTiers = { height:0, coins:0, springs:0, bounces:0, broken:0 }; }
     if(!save.settings){ save.settings = { ...DEFAULT_SETTINGS }; }
     if(typeof save.settings.tiltControls !== 'boolean'){ save.settings.tiltControls = true; }
     if(!save.daily){ save.daily = { lastClaim:'', streak:0, lastAmount:0, doubledToday:false, challenges:null }; }
@@ -654,24 +655,13 @@ async function loadSave(){
     if(typeof save.totalXP !== 'number'){ save.totalXP = 0; }
     if(!Array.isArray(save.unlockedSkins)) save.unlockedSkins = ['bubblegum'];
     if(!Array.isArray(save.unlockedEffects)) save.unlockedEffects = ['none'];
-    // Rebuild the mission arrays (Gold and XP pools) against the fixed
-    // low/mid/high band order, migrating (or generating fresh) any slot
-    // that's missing or predates the tiered/pooled mission system, so
-    // nothing gets silently stuck.
-    if(!Array.isArray(save.missions)) save.missions = [];
-    save.missions = MISSION_BAND_ORDER.map((band, i)=>{
-      const m = save.missions[i];
-      const valid = m && m.band===band && typeof m.baseline==='number' && typeof m.tier==='number'
-        && MISSION_BANDS[band] && MISSION_BANDS[band].types[m.type];
-      return valid ? m : makeMission(band, 'gold');
-    });
-    if(!Array.isArray(save.xpMissions)) save.xpMissions = [];
-    save.xpMissions = MISSION_BAND_ORDER.map((band, i)=>{
-      const m = save.xpMissions[i];
-      const valid = m && m.band===band && typeof m.baseline==='number' && typeof m.tier==='number'
-        && XP_MISSION_BANDS[band] && XP_MISSION_BANDS[band].types[m.type];
-      return valid ? m : makeMission(band, 'xp');
-    });
+    // Old saves may still carry the retired Gold/XP mission-pool fields —
+    // harmless to leave sitting unused, but achievementStats/weeklyMissions
+    // (the new system) need to exist going forward.
+    if(!save.achievementStats){ save.achievementStats = { jumps:0, coins:0, runs:0, bestHeight:0, springs:0, broken:0, movingLandings:0 }; }
+    ['jumps','coins','runs','bestHeight','springs','broken','movingLandings'].forEach(k=>{ if(typeof save.achievementStats[k]!=='number') save.achievementStats[k]=0; });
+    if(save.best>0 && save.achievementStats.bestHeight < save.best) save.achievementStats.bestHeight = save.best; // carry forward any pre-existing best height
+    if(save.weeklyMissions===undefined) save.weeklyMissions = null;
   }catch(e){
     save = defaultSave();
   }
@@ -682,6 +672,30 @@ async function persistSave(){
   try{ await window.storage.set(SAVE_KEY, JSON.stringify(save)); }catch(e){ /* ignore */ }
 }
 function markDirty(){ saveDirty = true; }
+
+// Thin, semantically-named wrapper around the mission-complete sound —
+// used anywhere a mission/achievement/challenge completes, so the sound
+// choice only has to be decided in one place.
+function playMissionSfx(){ sfx.mission(); }
+
+// Small pill notification, top-center, auto-dismissing. Caps the number
+// stacked at once so a burst of events (e.g. several achievement tiers
+// completing on the same bounce) doesn't flood the screen.
+const TOAST_MAX_STACKED = 3;
+function showToast(message){
+  const container = document.getElementById('toast-container');
+  while(container.children.length >= TOAST_MAX_STACKED){
+    container.removeChild(container.firstChild);
+  }
+  const el = document.createElement('div');
+  el.className = 'toast-item';
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(()=>{
+    el.classList.add('toast-out');
+    setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); }, 260);
+  }, 2600);
+}
 
 /* ---------------- Playtesting data log ----------------
    Records exactly the columns worth tracking before rebalancing the
@@ -702,23 +716,6 @@ function logPurchase(item, cost, kind){
    Permanent, one-time milestones tied to the space-stage journey — unlike
    missions, these never reset and exist purely to mark "how far you've
    ever gotten," across all runs. */
-const ACHIEVEMENTS = [
-  { id:'firstContact', name:'First Contact', desc:'Reach the edge of space', threshold:1200, icon:'🚀' },
-  { id:'galactic',     name:'Galactic',      desc:'Reach 10,000m',           threshold:10000, icon:'🌌' },
-  { id:'cosmic',       name:'Cosmic',        desc:'Reach 25,000m',           threshold:25000, icon:'☄️' },
-  { id:'beyond',       name:'Beyond',        desc:'Reach 50,000m',           threshold:50000, icon:'✨' },
-];
-function checkAchievements(meters){
-  ACHIEVEMENTS.forEach(a=>{
-    if(meters >= a.threshold && !save.achievements.includes(a.id)){
-      save.achievements.push(a.id);
-      showToast(`${a.icon} Achievement unlocked: ${a.name}!`);
-      playMissionSfx();
-      markDirty();
-    }
-  });
-}
-
 setInterval(()=>{ if(saveDirty){ saveDirty=false; persistSave(); } }, 900);
 
 /* ---------------- Cosmetics config ---------------- */
@@ -741,6 +738,31 @@ const SKINS = [
   { id:'hotdog',      name:'Hotdog Squish',          cost:4500, shape:'blob', coveted:true, colors:['#FFE3B0','#F0B860','#C98A30'] },
   { id:'icecream',    name:'Ice Cream Sandwich Squish', cost:6000, shape:'cube', coveted:true, colors:['#FFF8E8','#F3E3C4','#E4D0A6'] },
   { id:'tungtungtung', name:'Trip T Squish', cost:5000, shape:'cube', coveted:true, colors:['#E8C48A','#B8823A','#5C3A18'] }, // wooden brainrot-meme tribute skin
+  // Swirl designs — a spiral of alternating accent colors layered over the
+  // base gradient, in both round and cube silhouettes.
+  { id:'swirl_candy',  name:'Candy Swirl',  cost:2500, shape:'blob', coveted:true, colors:['#FFD6EC','#FF8FD1','#D6479F'] },
+  { id:'swirl_cosmic', name:'Cosmic Swirl', cost:3200, shape:'blob', coveted:true, colors:['#B8E8FF','#5CC8E8','#2A6E8C'] },
+  { id:'swirl_ember',  name:'Ember Swirl',  cost:3200, shape:'cube', coveted:true, colors:['#FFE0A0','#FF9A3E','#C6420C'] },
+  // A bold, heavy-looking cube — sharper corners and thick bracket edges
+  // instead of the soft rounded default, so it reads as chunkier/bigger.
+  { id:'megacube', name:'Mega Cube', cost:2800, shape:'cube', coveted:true, colors:['#E8E8F5','#B0B0CC','#5C5C7A'], cornerRadius:0.08 },
+  // Fruits
+  { id:'watermelon', name:'Watermelon Squish', cost:2200, shape:'blob', coveted:true, colors:['#FFB3B3','#FF5C5C','#D6341F'] },
+  { id:'orange',      name:'Orange Squish',     cost:2000, shape:'blob', coveted:true, colors:['#FFE0A8','#FFA33E','#E67300'] },
+  { id:'pineapple',   name:'Pineapple Squish',  cost:2600, shape:'blob', coveted:true, colors:['#FFF3B0','#FFD23F','#E8A317'] },
+  // Animals
+  { id:'panda',  name:'Panda Squish',  cost:3000, shape:'blob', coveted:true, colors:['#FFFFFF','#F0F0F5','#D8D8E0'] },
+  { id:'tiger',  name:'Tiger Squish',  cost:3000, shape:'blob', coveted:true, colors:['#FFE0A8','#FF9A3E','#E8720C'] },
+  { id:'froggy', name:'Froggy Squish', cost:2400, shape:'blob', coveted:true, colors:['#E0FFC4','#8CE85C','#4CAF50'] },
+  // Gummy bear
+  { id:'gummybear', name:'Gummy Bear Squish', cost:2800, shape:'blob', coveted:true, colors:['#FFD9C4','#FF8C5A','#D6420C'] },
+  // Dumplings — a mystery-toy-style set with a pleated top seam, four
+  // regular colors plus one rare glitter variant.
+  { id:'dumpling_white',  name:'Dumpling Squish',        cost:2000, shape:'blob', coveted:true, colors:['#FFFFFF','#F5F0E8','#E0D8C8'] },
+  { id:'dumpling_blue',   name:'Blue Dumpling Squish',   cost:2000, shape:'blob', coveted:true, colors:['#C8E8FF','#7FCBFF','#3E8FD0'] },
+  { id:'dumpling_teal',   name:'Teal Dumpling Squish',   cost:2000, shape:'blob', coveted:true, colors:['#B8FFE8','#5CE8C0','#2FA88C'] },
+  { id:'dumpling_purple', name:'Purple Dumpling Squish', cost:2000, shape:'blob', coveted:true, colors:['#E0C8FF','#B080FF','#7A4FD0'] },
+  { id:'dumpling_pinkglitter', name:'Pink Glitter Dumpling Squish', cost:4200, shape:'blob', coveted:true, colors:['#FFD0E8','#FF7AC0','#E83E90'] },
 ];
 // Small decorative details drawn on top of certain skins (seeds, mustard, cookie
 // layers) — called from inside drawBlob's already-transformed context.
@@ -795,7 +817,183 @@ const SKIN_DECORATORS = {
       c.stroke();
     });
   },
+  // Swirl designs: alternating accent-colored bands spiraling out from the
+  // center, drawn as a series of arcs at increasing radius/rotation.
+  swirl_candy: (c,r)=> drawSwirl(c, r, ['#FF3B5C','#FF8FD1'], 'blob'),
+  swirl_cosmic: (c,r)=> drawSwirl(c, r, ['#2A6E8C','#5CC8E8'], 'blob'),
+  swirl_ember: (c,r)=> drawSwirl(c, r, ['#C6420C','#FF9A3E'], 'cube'),
+  // Mega Cube: bracket corners to reinforce the "heavy block" read on top
+  // of the sharper base silhouette (see SKIN_CORNER_RADIUS).
+  megacube: (c,r)=>{
+    const s = r*1.68, half = s/2, arm = s*0.22;
+    c.strokeStyle = 'rgba(40,40,60,0.55)'; c.lineWidth = r*0.09; c.lineCap='round';
+    [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sy])=>{
+      c.beginPath();
+      c.moveTo(sx*half, sy*half - sy*arm);
+      c.lineTo(sx*half, sy*half);
+      c.lineTo(sx*half - sx*arm, sy*half);
+      c.stroke();
+    });
+  },
+  watermelon: (c,r)=>{
+    // Green rind ring around the edge, plus black seeds scattered on the
+    // pink "flesh" body color.
+    c.strokeStyle = '#3FA34D'; c.lineWidth = r*0.22;
+    c.beginPath(); c.arc(0,0,r*0.92,0,Math.PI*2); c.stroke();
+    c.strokeStyle = '#1F7A33'; c.lineWidth = r*0.08;
+    c.beginPath(); c.arc(0,0,r*0.8,0,Math.PI*2); c.stroke();
+    c.fillStyle = '#2B2B2B';
+    for(let i=0;i<8;i++){
+      const a = (i/8)*Math.PI*2 + 0.4;
+      const rr = r*(0.3+0.28*(i%2));
+      c.save(); c.translate(Math.cos(a)*rr, Math.sin(a)*rr*0.85); c.rotate(a);
+      c.beginPath(); c.ellipse(0,0,r*0.045,r*0.09,0,0,Math.PI*2); c.fill();
+      c.restore();
+    }
+  },
+  orange: (c,r)=>{
+    // Citrus segment lines radiating from center, plus a small stem dimple.
+    c.strokeStyle = 'rgba(200,90,0,0.35)'; c.lineWidth = r*0.035;
+    for(let i=0;i<8;i++){
+      const a = (i/8)*Math.PI*2;
+      c.beginPath(); c.moveTo(0,0); c.lineTo(Math.cos(a)*r*0.85, Math.sin(a)*r*0.85); c.stroke();
+    }
+    c.fillStyle = '#4CAF6D';
+    c.beginPath(); c.ellipse(0,-r*0.92,r*0.1,r*0.12,0,0,Math.PI*2); c.fill();
+  },
+  pineapple: (c,r)=>{
+    // Diamond crosshatch texture + a spiky green crown on top.
+    c.strokeStyle = 'rgba(180,120,10,0.45)'; c.lineWidth = r*0.035;
+    for(let f=-0.6; f<=0.6; f+=0.3){
+      c.beginPath(); c.moveTo(-r*0.9, f*r); c.lineTo(r*0.9, (f+0.55)*r); c.stroke();
+      c.beginPath(); c.moveTo(-r*0.9, (f+0.55)*r); c.lineTo(r*0.9, f*r); c.stroke();
+    }
+    c.fillStyle = '#4CAF6D';
+    for(let i=-2;i<=2;i++){
+      c.beginPath();
+      c.moveTo(i*r*0.13, -r*0.8);
+      c.lineTo(i*r*0.13-r*0.06, -r*1.15+Math.abs(i)*r*0.08);
+      c.lineTo(i*r*0.13+r*0.06, -r*1.15+Math.abs(i)*r*0.08);
+      c.closePath(); c.fill();
+    }
+  },
+  panda: (c,r)=>{
+    // Black ear circles + eye patches over the white/grey base.
+    c.fillStyle = '#2B2B2B';
+    [-1,1].forEach(dir=>{
+      c.beginPath(); c.arc(dir*r*0.68, -r*0.68, r*0.24, 0, Math.PI*2); c.fill();
+    });
+    [-1,1].forEach(dir=>{
+      c.save(); c.translate(dir*r*0.32, -r*0.05); c.rotate(dir*0.15);
+      c.beginPath(); c.ellipse(0,0, r*0.18, r*0.24, 0, 0, Math.PI*2); c.fill();
+      c.restore();
+    });
+  },
+  tiger: (c,r)=>{
+    // Curved black stripes over the orange base.
+    c.strokeStyle = 'rgba(30,20,10,0.6)'; c.lineWidth = r*0.09; c.lineCap='round';
+    [[-0.55,-0.5,0.3],[0.15,-0.7,-0.25],[-0.3,0.15,0.35],[0.5,0.35,-0.3],[-0.05,0.65,0.2]].forEach(([sx,sy,curve])=>{
+      c.beginPath();
+      c.moveTo(sx*r-r*0.16, sy*r);
+      c.quadraticCurveTo(sx*r, sy*r+curve*r*0.5, sx*r+r*0.16, sy*r);
+      c.stroke();
+    });
+  },
+  froggy: (c,r)=>{
+    // Two bulging eye-bumps above the usual face, plus a pale belly patch.
+    c.fillStyle = 'rgba(255,255,255,0.5)';
+    c.beginPath(); c.ellipse(0, r*0.55, r*0.4, r*0.28, 0, 0, Math.PI*2); c.fill();
+    [-1,1].forEach(dir=>{
+      c.fillStyle = '#8CE85C';
+      c.beginPath(); c.arc(dir*r*0.34, -r*0.62, r*0.2, 0, Math.PI*2); c.fill();
+      c.fillStyle = 'rgba(61,43,86,0.75)';
+      c.beginPath(); c.arc(dir*r*0.34, -r*0.62, r*0.09, 0, Math.PI*2); c.fill();
+    });
+  },
+  gummybear: (c,r)=>{
+    // Two small ear-bump circles + an extra glossy jelly streak beyond the
+    // usual highlight, for that translucent-candy shine.
+    c.fillStyle = 'rgba(255,140,90,0.9)';
+    [-1,1].forEach(dir=>{
+      c.beginPath(); c.arc(dir*r*0.55, -r*0.82, r*0.2, 0, Math.PI*2); c.fill();
+    });
+    c.fillStyle = 'rgba(255,255,255,0.35)';
+    c.beginPath(); c.ellipse(r*0.25, r*0.1, r*0.12, r*0.4, -0.3, 0, Math.PI*2); c.fill();
+  },
+  // Dumplings: a crimped/pleated seam across the top, like a gathered
+  // dumpling or bao wrapper, shared by all 5 colors below.
+  dumpling_white:  (c,r)=> drawDumplingPleats(c,r),
+  dumpling_blue:   (c,r)=> drawDumplingPleats(c,r),
+  dumpling_teal:   (c,r)=> drawDumplingPleats(c,r),
+  dumpling_purple: (c,r)=> drawDumplingPleats(c,r),
+  dumpling_pinkglitter: (c,r)=>{
+    drawDumplingPleats(c,r);
+    // Fixed sparkle positions (not Math.random() per frame) so the glitter
+    // texture stays put instead of flickering every frame.
+    c.fillStyle = 'rgba(255,255,255,0.9)';
+    DUMPLING_GLITTER_DOTS.forEach(([fx,fy])=>{
+      c.beginPath(); c.arc(fx*r, fy*r, r*0.03, 0, Math.PI*2); c.fill();
+    });
+  },
 };
+// A spiral of alternating accent-colored bands, drawn as short arcs at
+// increasing radius and rotation — shared by all three Swirl skins, just
+// with a different 3-color accent set each.
+// Flowing diagonal wave bands (2-3 thick, softly-curved ribbons cutting
+// across the shape), matching the marbled Nee-Doh-style swirl look rather
+// than concentric arcs. Clipped to the actual shape silhouette so bands
+// never spill past the edge.
+function drawSwirl(c, r, accentColors, shape){
+  c.save();
+  if(shape==='cube'){
+    const s = r*1.68;
+    roundRectPath(c, s, s, s*0.24);
+  } else {
+    c.beginPath(); c.arc(0,0,r,0,Math.PI*2);
+  }
+  c.clip();
+  const bands = [
+    { color: accentColors[0], width: 0.5,  offsetY: -0.22, bulge: -0.55 },
+    { color: accentColors[1], width: 0.32, offsetY: 0.28,  bulge: 0.45 },
+  ];
+  bands.forEach(band=>{
+    c.strokeStyle = band.color;
+    c.lineWidth = r*band.width;
+    c.lineCap = 'round';
+    c.beginPath();
+    const y0 = band.offsetY*r - r*0.9, y1 = band.offsetY*r + r*0.9;
+    c.moveTo(-r*1.3, y0);
+    c.quadraticCurveTo(band.bulge*r*1.4, band.offsetY*r, r*1.3, y1);
+    c.stroke();
+  });
+  c.restore();
+}
+const SKIN_CORNER_RADIUS = { megacube: 0.08 };
+// Crimped seam across the top of a Dumpling skin — a scalloped line plus a
+// row of short pleat marks, echoing the gathered fold on a real dumpling.
+function drawDumplingPleats(c, r){
+  c.strokeStyle = 'rgba(0,0,0,0.14)';
+  c.lineWidth = r*0.05;
+  c.lineCap = 'round';
+  const n = 6;
+  c.beginPath();
+  for(let i=0;i<=n;i++){
+    const t = i/n;
+    const x = -r*0.68 + t*r*1.36;
+    const y = -r*0.72 + Math.sin(t*Math.PI*n*0.5)*r*0.04;
+    if(i===0) c.moveTo(x,y); else c.lineTo(x,y);
+  }
+  c.stroke();
+  for(let i=0;i<=6;i++){
+    const t = i/6;
+    const x = -r*0.62 + t*r*1.24;
+    c.beginPath();
+    c.moveTo(x, -r*0.78);
+    c.lineTo(x, -r*0.6);
+    c.stroke();
+  }
+}
+const DUMPLING_GLITTER_DOTS = [[-0.5,-0.3],[0.3,-0.5],[0.1,0.2],[-0.2,0.4],[0.5,0.1],[-0.4,0.55],[0.55,-0.15],[-0.15,-0.62],[0.35,0.45],[-0.6,0.05]];
 const EFFECTS = [
   { id:'none',    name:'No Trail',      cost:0 },
   { id:'sparkle', name:'Sparkle Trail', cost:300, unlockLevel:5 },
@@ -996,198 +1194,152 @@ const ABILITY_POINT_BASE_COST = 300; // tokens for the first Ability Point ever 
 const ABILITY_POINT_COST_STEP = 50;  // each subsequent one costs 50 more
 function nextAbilityPointCost(){ return ABILITY_POINT_BASE_COST + ABILITY_POINT_COST_STEP*(save.totalAbilityPointsBought||0); }
 
-/* ---------------- Missions ---------------- */
-// Three permanent slots, one per difficulty band. Low and Mid regenerate at
-// a steady, fixed difficulty each time (quick, reliable token trickle).
-// High is the escalating band: every completion multiplies that type's
-// target by 5x for next time (per the design brief), with a gentler reward
-// curve so the token economy doesn't blow up alongside it.
-const MISSION_BANDS = {
-  low: {
-    label: 'Low Tier', escalate: false,
-    types: {
-      height:  { base:60,  reward:12, short:'Height',   label:t=>`Reach ${t}m in one run` },
-      coins:   { base:3,   reward:12, short:'Coins',    label:t=>`Collect ${t} coins in one run` },
-      springs: { base:2,   reward:14, short:'Springs',  label:t=>`Bounce on ${t} springs in one run` },
-      bounces: { base:8,   reward:12, short:'Bounces',  label:t=>`Land ${t} bounces in one run` },
-      broken:  { base:1,   reward:14, short:'Platforms',label:t=>`Break ${t} crumbling platform${t>1?'s':''} in one run` },
-      noSaveHeight:    { base:50, reward:16, short:'No-Save',  label:t=>`Reach ${t}m without using a Safety Net or Shield` },
-      movingLandings:  { base:3,  reward:15, short:'Moving',   label:t=>`Land on ${t} moving platforms in one run` },
-    }
-  },
-  mid: {
-    label: 'Mid Tier', escalate: false,
-    types: {
-      height:  { base:400, reward:45, short:'Height',   label:t=>`Reach ${t}m in one run` },
-      coins:   { base:12,  reward:45, short:'Coins',    label:t=>`Collect ${t} coins in one run` },
-      springs: { base:6,   reward:55, short:'Springs',  label:t=>`Bounce on ${t} springs in one run` },
-      bounces: { base:35,  reward:45, short:'Bounces',  label:t=>`Land ${t} bounces in one run` },
-      broken:  { base:5,   reward:55, short:'Platforms',label:t=>`Break ${t} crumbling platforms in one run` },
-      noSaveHeight:    { base:250, reward:58, short:'No-Save', label:t=>`Reach ${t}m without using a Safety Net or Shield` },
-      movingLandings:  { base:10,  reward:50, short:'Moving',  label:t=>`Land on ${t} moving platforms in one run` },
-    }
-  },
-  high: {
-    label: 'High Tier', escalate: true,
-    types: {
-      height:  { base:250, rewardBase:70,  short:'Height',   label:t=>`Reach ${t}m in one run` },
-      coins:   { base:10,  rewardBase:70,  short:'Coins',    label:t=>`Collect ${t} coins in one run` },
-      springs: { base:6,   rewardBase:80,  short:'Springs',  label:t=>`Bounce on ${t} springs in one run` },
-      bounces: { base:30,  rewardBase:70,  short:'Bounces',  label:t=>`Land ${t} bounces in one run` },
-      broken:  { base:6,   rewardBase:90,  short:'Platforms',label:t=>`Break ${t} crumbling platforms in one run` },
-      noSaveHeight:    { base:150, rewardBase:95, short:'No-Save', label:t=>`Reach ${t}m without using a Safety Net or Shield` },
-      movingLandings:  { base:8,   rewardBase:85, short:'Moving',  label:t=>`Land on ${t} moving platforms in one run` },
-    }
-  },
-};
-const MISSION_TYPES = Object.keys(MISSION_BANDS.high.types);
-const MISSION_BAND_ORDER = ['low','mid','high'];
-
-// A second, parallel mission pool paying out XP instead of Tokens. Same
-// tier structure and (for now, as a placeholder) the same target/reward
-// magnitudes as the Gold pool — genuinely separate numbers can come once
-// there's real playtesting data on how fast XP should flow relative to
-// in-run action-based XP.
-const XP_MISSION_BANDS = {
-  low: {
-    label: 'Low Tier', escalate: false,
-    types: {
-      height:  { base:60,  reward:12, short:'Height',   label:t=>`Reach ${t}m in one run` },
-      coins:   { base:3,   reward:12, short:'Coins',    label:t=>`Collect ${t} coins in one run` },
-      springs: { base:2,   reward:14, short:'Springs',  label:t=>`Bounce on ${t} springs in one run` },
-      bounces: { base:8,   reward:12, short:'Bounces',  label:t=>`Land ${t} bounces in one run` },
-      broken:  { base:1,   reward:14, short:'Platforms',label:t=>`Break ${t} crumbling platform${t>1?'s':''} in one run` },
-      noSaveHeight:    { base:50, reward:16, short:'No-Save',  label:t=>`Reach ${t}m without using a Safety Net or Shield` },
-      movingLandings:  { base:3,  reward:15, short:'Moving',   label:t=>`Land on ${t} moving platforms in one run` },
-    }
-  },
-  mid: {
-    label: 'Mid Tier', escalate: false,
-    types: {
-      height:  { base:400, reward:45, short:'Height',   label:t=>`Reach ${t}m in one run` },
-      coins:   { base:12,  reward:45, short:'Coins',    label:t=>`Collect ${t} coins in one run` },
-      springs: { base:6,   reward:55, short:'Springs',  label:t=>`Bounce on ${t} springs in one run` },
-      bounces: { base:35,  reward:45, short:'Bounces',  label:t=>`Land ${t} bounces in one run` },
-      broken:  { base:5,   reward:55, short:'Platforms',label:t=>`Break ${t} crumbling platforms in one run` },
-      noSaveHeight:    { base:250, reward:58, short:'No-Save', label:t=>`Reach ${t}m without using a Safety Net or Shield` },
-      movingLandings:  { base:10,  reward:50, short:'Moving',  label:t=>`Land on ${t} moving platforms in one run` },
-    }
-  },
-  high: {
-    label: 'High Tier', escalate: true,
-    types: {
-      height:  { base:250, rewardBase:70,  short:'Height',   label:t=>`Reach ${t}m in one run` },
-      coins:   { base:10,  rewardBase:70,  short:'Coins',    label:t=>`Collect ${t} coins in one run` },
-      springs: { base:6,   rewardBase:80,  short:'Springs',  label:t=>`Bounce on ${t} springs in one run` },
-      bounces: { base:30,  rewardBase:70,  short:'Bounces',  label:t=>`Land ${t} bounces in one run` },
-      broken:  { base:6,   rewardBase:90,  short:'Platforms',label:t=>`Break ${t} crumbling platforms in one run` },
-      noSaveHeight:    { base:150, rewardBase:95, short:'No-Save', label:t=>`Reach ${t}m without using a Safety Net or Shield` },
-      movingLandings:  { base:8,   rewardBase:85, short:'Moving',  label:t=>`Land on ${t} moving platforms in one run` },
-    }
-  },
-};
-
-const MISSION_POOLS = {
-  gold: { bands: MISSION_BANDS,    tiersField:'missionTiers',   missionsField:'missions',   unit:'tokens', icon:'' },
-  xp:   { bands: XP_MISSION_BANDS, tiersField:'xpMissionTiers', missionsField:'xpMissions', unit:'XP',     icon:'✨' },
-};
-
-function makeMission(band, poolId, saveRef){
-  poolId = MISSION_POOLS[poolId] ? poolId : 'gold';
-  const pool = MISSION_POOLS[poolId];
-  band = pool.bands[band] ? band : 'low';
-  const bandCfg = pool.bands[band];
-  const s = saveRef || save;
-  const tiers = (s && s[pool.tiersField]) ? s[pool.tiersField] : {};
-  const stats = (typeof runStats!=='undefined' && runStats) ? runStats : { metersMax:0, coins:0, springs:0, bounces:0, broken:0, usedAnySave:false, movingLandings:0 };
-  // If a save has already been used this run, never (re)roll a
-  // noSaveHeight mission — it would be dead on arrival, permanently stuck
-  // at 0 progress for the rest of the run, which is exactly what looked
-  // like a bug.
-  const eligibleTypes = stats.usedAnySave ? MISSION_TYPES.filter(t=> t!=='noSaveHeight') : MISSION_TYPES;
-  const type = eligibleTypes[Math.floor(Math.random()*eligibleTypes.length)];
-  const cfg = bandCfg.types[type];
-  let tier = bandCfg.escalate ? (tiers[type] || 0) : 0;
-  let target = bandCfg.escalate ? Math.round(cfg.base * Math.pow(5, tier)) : cfg.base;
-  let baseline = 0;
-  if(type==='height' || type==='noSaveHeight'){
-    // Height-based types are judged against the run's absolute peak, so if
-    // the player is already past this target (e.g. it regenerated mid-run),
-    // silently step it up until it's genuinely ahead of them — no reward is
-    // given for steps skipped this way, which is what stops a cluster of
-    // "already true" missions from all firing their toast/sound at once.
-    // (noSaveHeight also correctly ignores this if a save was already used —
-    // stats.metersMax alone is the right check either way.)
-    while(target <= stats.metersMax){
-      if(bandCfg.escalate){ tier++; target = Math.round(cfg.base*Math.pow(5,tier)); }
-      else { target = Math.round(target*1.5) + 20; }
-    }
-  } else {
-    baseline = stats[type] || 0; // progress only counts what happens AFTER this mission is created
-  }
-  const reward = bandCfg.escalate ? Math.max(20, Math.round(cfg.rewardBase * Math.pow(1.5, tier))) : cfg.reward;
-  return { id: Math.random().toString(36).slice(2,9), pool:poolId, band, type, tier, target, baseline, reward, label: cfg.label(target), progress:0 };
+/* ============================================================
+   TIERED ACHIEVEMENTS
+   Permanent, lifetime accomplishments — these never reset and never
+   regenerate. Each has 4 escalating tiers tracked against a lifetime
+   counter in save.achievementStats. XP rewards are 5x the original design
+   values (Tier I: small, Tier IV: a genuinely huge spike).
+   ============================================================ */
+const ACHIEVEMENTS = [
+  { id:'jumps', name:'Hop Machine', icon:'🦘', stat:'jumps',
+    tiers:[ {target:10, reward:50, name:'Warm Up'}, {target:100, reward:200, name:'Getting Bouncy'}, {target:1000, reward:750, name:'Hop Machine'}, {target:10000, reward:2500, name:'Infinite Bounce'} ] },
+  { id:'coins', name:'Coin Collector', icon:'🪙', stat:'coins',
+    tiers:[ {target:50, reward:75, name:'Pocket Change'}, {target:500, reward:300, name:'Coin Collector'}, {target:2500, reward:1000, name:'Coin Hoarder'}, {target:10000, reward:3750, name:'Coin Tycoon'} ] },
+  { id:'runs', name:'Keep Squishing', icon:'🎮', stat:'runs',
+    tiers:[ {target:5, reward:50, name:'First Steps'}, {target:25, reward:250, name:'Regular'}, {target:100, reward:1000, name:'Dedicated'}, {target:500, reward:3750, name:'Squish Veteran'} ] },
+  { id:'height', name:'Skyward', icon:'🚀', stat:'bestHeight',
+    tiers:[ {target:500, reward:100, name:'Off the Ground'}, {target:2500, reward:375, name:'Into the Clouds'}, {target:10000, reward:1250, name:'Into Space'}, {target:25000, reward:5000, name:'Deep Space'} ] },
+  { id:'springs', name:'Spring Loaded', icon:'🟡', stat:'springs',
+    tiers:[ {target:10, reward:75, name:'Boing'}, {target:50, reward:300, name:'Spring Loaded'}, {target:250, reward:1000, name:'Bounce Master'}, {target:1000, reward:3000, name:'Spring Legend'} ] },
+  { id:'crumble', name:'Break Stuff', icon:'💥', stat:'broken',
+    tiers:[ {target:10, reward:100, name:'First Crack'}, {target:50, reward:375, name:'Breaker'}, {target:250, reward:1250, name:'Demolition Squish'}, {target:1000, reward:3750, name:'Total Destruction'} ] },
+  { id:'moving', name:'Moving Target', icon:'🎯', stat:'movingLandings',
+    tiers:[ {target:10, reward:100, name:'Moving Target'}, {target:50, reward:375, name:'Platform Pro'}, {target:250, reward:1250, name:'Precision Squish'}, {target:1000, reward:3750, name:'Impossible Landing'} ] },
+];
+// Adds to a lifetime achievement counter (jumps, coins, springs, broken,
+// movingLandings) and checks for newly-crossed tiers.
+function trackAchievement(stat, amount=1){
+  if(!save.achievementStats) save.achievementStats = {};
+  save.achievementStats[stat] = (save.achievementStats[stat]||0) + amount;
+  checkTieredAchievements(stat);
+  markDirty();
 }
-
-/* Toasts are queued and shown one at a time with a short gap between them,
-   so a burst of simultaneous completions can't spam the screen at once. */
-let toastQueue = [];
-let toastBusy = false;
-const TOAST_GAP_MS = 850;
-function showToast(text){
-  toastQueue.push(text);
-  drainToastQueue();
+// For stats that are a running MAX rather than a cumulative total (just
+// bestHeight today) — only moves the counter upward, never down.
+function setAchievementStat(stat, value){
+  if(!save.achievementStats) save.achievementStats = {};
+  save.achievementStats[stat] = Math.max(save.achievementStats[stat]||0, value);
+  checkTieredAchievements(stat);
+  markDirty();
 }
-function drainToastQueue(){
-  if(toastBusy || toastQueue.length===0) return;
-  toastBusy = true;
-  const text = toastQueue.shift();
-  const c = document.getElementById('toast-container');
-  const t = document.createElement('div');
-  t.className='toast'; t.textContent=text;
-  c.appendChild(t);
-  setTimeout(()=> t.remove(), 2700);
-  setTimeout(()=>{ toastBusy = false; drainToastQueue(); }, TOAST_GAP_MS);
-}
-
-// A separate, short cooldown on the completion SFX specifically — toasts can
-// queue up quietly, but the "ding" should never machine-gun even if several
-// missions genuinely complete close together.
-let lastMissionSfxAt = -Infinity;
-function playMissionSfx(){
-  const now = performance.now();
-  if(now - lastMissionSfxAt > 600){
-    sfx.mission();
-    lastMissionSfxAt = now;
-  }
-}
-
-function checkMissions(runStats){
-  Object.keys(MISSION_POOLS).forEach(poolId=>{
-    const pool = MISSION_POOLS[poolId];
-    save[pool.missionsField].forEach((m, i)=>{
-      let val;
-      if(m.type==='height'){
-        val = runStats.metersMax;
-      } else if(m.type==='noSaveHeight'){
-        val = runStats.usedAnySave ? 0 : runStats.metersMax; // freezes the moment a save is used
-      } else {
-        val = Math.max(0, (runStats[m.type]||0) - m.baseline);
-      }
-      if(val > m.progress) m.progress = Math.min(val, m.target);
-      if(m.progress >= m.target && !m.justCompleted){
-        m.justCompleted = true;
-        if(poolId==='xp') grantXP(m.reward); else save.tokens += m.reward;
-        if(pool.bands[m.band].escalate){
-          save[pool.tiersField][m.type] = Math.max(save[pool.tiersField][m.type]||0, m.tier+1);
-        }
-        showToast(`🎉 ${pool.bands[m.band].label} complete! +${m.reward} ${pool.unit}`);
+function checkTieredAchievements(stat){
+  const value = save.achievementStats[stat] || 0;
+  ACHIEVEMENTS.filter(a=>a.stat===stat).forEach(a=>{
+    a.tiers.forEach((tier, index)=>{
+      const achievementId = `${a.id}_${index}`;
+      if(value >= tier.target && !save.achievements.includes(achievementId)){
+        save.achievements.push(achievementId);
+        grantXP(tier.reward);
+        showToast(`${a.icon} ${a.name}: ${tier.name} +${tier.reward} XP`);
         playMissionSfx();
-        save[pool.missionsField][i] = makeMission(m.band, poolId);
-        markDirty();
       }
     });
   });
+}
+
+/* ============================================================
+   DAILY & WEEKLY MISSIONS
+   Replaces the old Gold/XP mission-pool system — two currencies
+   competing for attention was confusing. Now: Daily (short-term, resets
+   every day, Tokens + a little XP), Weekly (resets every week, mostly XP),
+   and Achievements (lifetime, above) each have a clear, distinct purpose.
+
+   Both pull from the SAME lifetime save.achievementStats counters used by
+   Achievements, rather than a separate tracking system — but critically,
+   each mission captures a BASELINE snapshot of that counter at creation
+   time, so progress is "how much since this mission started", not the
+   raw lifetime total (which would otherwise make a freshly-created
+   mission look instantly complete for anyone with existing lifetime
+   progress). 'height' is the one exception — it tracks the CURRENT run's
+   peak directly, since that's inherently per-run already.
+   ============================================================ */
+const DAILY_MISSION_DEFS = [
+  { type:'height',         make:()=>({ target:500, label:'Reach 500m in one run',            rewardTokens:30, rewardXP:75  }) },
+  { type:'coins',          make:()=>({ target:40,  label:'Collect 40 coins today',            rewardTokens:35, rewardXP:100 }) },
+  { type:'runs',           make:()=>({ target:3,   label:'Complete 3 runs today',              rewardTokens:30, rewardXP:75  }) },
+  { type:'jumps',          make:()=>({ target:75,  label:'Jump 75 times today',                rewardTokens:35, rewardXP:100 }) },
+  { type:'springs',        make:()=>({ target:10,  label:'Bounce on 10 springs today',         rewardTokens:40, rewardXP:100 }) },
+  { type:'broken',         make:()=>({ target:5,   label:'Break 5 crumbling platforms today',  rewardTokens:40, rewardXP:100 }) },
+  { type:'movingLandings', make:()=>({ target:8,   label:'Land on 8 moving platforms today',   rewardTokens:45, rewardXP:125 }) },
+];
+const WEEKLY_MISSION_DEFS = [
+  { type:'jumps',          target:500,  label:'Jump 500 times this week',                rewardXP:750  },
+  { type:'coins',          target:500,  label:'Collect 500 coins this week',             rewardXP:875  },
+  { type:'runs',           target:15,   label:'Complete 15 runs this week',              rewardXP:1000 },
+  { type:'height',         target:5000, label:'Reach 5,000m in one run',                 rewardXP:1125 },
+  { type:'springs',        target:75,   label:'Bounce on 75 springs this week',          rewardXP:1000 },
+  { type:'broken',         target:50,   label:'Break 50 crumbling platforms this week',  rewardXP:1125 },
+  { type:'movingLandings', target:50,   label:'Land on 50 moving platforms this week',   rewardXP:1250 },
+];
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function yesterdayStr(){ const d=new Date(Date.now()-864e5); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function dailyClaimable(){ return save.daily.lastClaim !== todayStr(); }
+function weekKey(){
+  const d = new Date();
+  const first = new Date(d.getFullYear(), 0, 1);
+  const week = Math.ceil(((d-first)/86400000 + first.getDay()+1) / 7);
+  return d.getFullYear()+'-W'+week;
+}
+function ensureDailyChallenges(){
+  if(!save.daily.challenges || save.daily.challenges.date !== todayStr()){
+    const defs = [...DAILY_MISSION_DEFS].sort(()=>Math.random()-0.5).slice(0,3);
+    const stats = save.achievementStats;
+    save.daily.challenges = { date: todayStr(), list: defs.map(d=>{
+      const m = d.make();
+      return { type:d.type, target:m.target, label:m.label, rewardTokens:m.rewardTokens, rewardXP:m.rewardXP, baseline: (d.type==='height' ? 0 : (stats[d.type]||0)), progress:0, done:false };
+    }) };
+    markDirty();
+  }
+}
+function ensureWeeklyMissions(){
+  const key = weekKey();
+  if(!save.weeklyMissions || save.weeklyMissions.week !== key){
+    const defs = [...WEEKLY_MISSION_DEFS].sort(()=>Math.random()-0.5).slice(0,5);
+    const stats = save.achievementStats;
+    save.weeklyMissions = { week:key, list: defs.map(m=> ({
+      type:m.type, target:m.target, label:m.label, rewardXP:m.rewardXP, baseline: (m.type==='height' ? 0 : (stats[m.type]||0)), progress:0, done:false
+    })) };
+    markDirty();
+  }
+}
+// Called once per finished run.
+function progressTimedMissions(rs){
+  ensureDailyChallenges();
+  ensureWeeklyMissions();
+  const stats = save.achievementStats;
+  save.daily.challenges.list.forEach(m=>{
+    if(m.done) return;
+    m.progress = (m.type==='height') ? Math.max(m.progress, rs.metersMax) : Math.max(0, (stats[m.type]||0) - m.baseline);
+    if(m.progress >= m.target){
+      m.progress = m.target; m.done = true;
+      save.tokens += m.rewardTokens||0;
+      if(m.rewardXP) grantXP(m.rewardXP);
+      showToast(`🎁 Daily complete! +${m.rewardTokens||0} tokens, +${m.rewardXP||0} XP`);
+      playMissionSfx();
+    }
+  });
+  save.weeklyMissions.list.forEach(m=>{
+    if(m.done) return;
+    m.progress = (m.type==='height') ? Math.max(m.progress, rs.metersMax) : Math.max(0, (stats[m.type]||0) - m.baseline);
+    if(m.progress >= m.target){
+      m.progress = m.target; m.done = true;
+      grantXP(m.rewardXP);
+      showToast(`⭐ Weekly complete! +${m.rewardXP} XP`);
+      playMissionSfx();
+    }
+  });
+  markDirty();
 }
 
 /* ---------------- Sound (synthesized, no audio files) ---------------- */
@@ -1288,7 +1440,13 @@ function drawBlob(c, x, y, r, scaleX, scaleY, colors, face, rotation, shape, dec
   grad.addColorStop(1, colors[2]);
   if(shape==='cube'){
     const s = r*1.68;
-    roundRectPath(c, s, s, s*0.24);
+    // Most cube skins share the same soft rounding; a skin can override it
+    // (e.g. Mega Cube uses a much sharper corner to read as heavier/blockier)
+    // via SKINS[].cornerRadius, looked up here by decorId since decorId is
+    // always the equipping skin's own id — no need to thread an extra
+    // parameter through every drawBlob() call site for this one skin.
+    const skinCfg = decorId && SKIN_CORNER_RADIUS[decorId];
+    roundRectPath(c, s, s, s*(skinCfg!==undefined ? skinCfg : 0.24));
   } else {
     c.beginPath();
     c.arc(0,0,r,0,Math.PI*2);
@@ -1431,6 +1589,10 @@ let meteors = [];
 let voidScreenFrac = null; // fraction of screen height where the void's edge currently sits; null until it activates
 let blackHoles = [];
 let blackHoleSpawnTimer = 0;
+let asteroids = [];
+let asteroidFieldActive = false;
+let asteroidFieldTimer = 0;
+let asteroidSpawnTimer = 0;
 let laserSpawnTimer = 0;
 let powerups = [];
 let hardStreak = 0;
@@ -1512,6 +1674,12 @@ function grantSave(kind, amount, bypassCap){
 function sensitivityLevel(){ return (save && save.settings && save.settings.sensitivity) || 5; }
 function sensitivityGain(){ return lerp(0.07, 0.24, (sensitivityLevel()-1)/9); }
 function sensitivityBlend(){ return lerp(0.16, 0.42, (sensitivityLevel()-1)/9); }
+// The tilt equivalent of sensitivityGain() — at low sensitivity you need to
+// tilt further to get the same steering strength; at high sensitivity a
+// small tilt goes a long way. Previously tilt only inherited the smoothing
+// (blend) from the sensitivity setting, not the actual input strength, so
+// low/high sensitivity barely changed how tilt felt in practice.
+function sensitivityTiltGain(){ return lerp(0.7, 1.6, (sensitivityLevel()-1)/9); }
 
 /* ---------------- Reachability-based platform generation ----------------
    Every platform is generated relative to the one before it and verified
@@ -1563,6 +1731,95 @@ function gapRangeFor(meters){
   return { min: lerp(62, 84, d), max: lerp(92, SAFE_VERTICAL_MAX, d) };
 }
 function horizontalRangeFor(meters){ return lerp(75, SAFE_HORIZONTAL_MAX, getDifficulty(meters)); }
+function randomBetween(min, max){ return min + Math.random()*(max-min); }
+
+/* ============================================================
+   ROUTE DENSITY & CHOICE PLATFORMS
+   Not "spawn fewer platforms" — a decision-quality system. Most jumps stay
+   a single forced platform (that's still the backbone — reachability math
+   and difficulty budgeting are untouched), but occasionally the generator
+   offers a genuine BRANCH: two platforms side by side, both independently
+   verified reachable through the exact same canReachPlatform() check every
+   other platform goes through. Never a third, weaker candidate just
+   because it fits — if only one side actually passes, that's not a choice
+   anymore, it's just the next platform.
+   ============================================================ */
+const ROUTE_DENSITY = { early: 0.72, mid: 0.82, late: 0.92 };
+function getRouteDensity(meters){
+  const d = getDifficulty(meters);
+  if(d < 0.35) return lerp(ROUTE_DENSITY.early, ROUTE_DENSITY.mid, d/0.35);
+  return lerp(ROUTE_DENSITY.mid, ROUTE_DENSITY.late, (d-0.35)/0.65);
+}
+const PLATFORM_ROLES = { RECOVERY:'recovery', MAIN:'main', CHOICE:'choice', CHALLENGE:'challenge' };
+const MAX_CONSECUTIVE_MAIN_PLATFORMS = 2;
+function countRecentPlatformRoles(windowSize){
+  const counts = { main:0, challenge:0, choice:0, recovery:0 };
+  platforms.slice(-(windowSize||6)).forEach(p=>{ if(p.role && counts[p.role]!==undefined) counts[p.role]++; });
+  return counts;
+}
+// Decides whether THIS jump should offer two platforms instead of one.
+// Never two in a row (that stops reading as special), and nudged upward
+// after a run of plain platforms so variety doesn't dry up.
+function shouldCreateChoice(meters){
+  if(hardStreak >= 3) return false; // a recovery platform takes priority for pacing
+  const density = getRouteDensity(meters);
+  // Anti-clustering only looks at the last 3 platforms now (was 6) — the
+  // path was feeling too linear, so choices can come back around sooner
+  // without ever landing back-to-back.
+  const recentClose = countRecentPlatformRoles(3);
+  if(recentClose.choice > 0) return false;
+  const recentWide = countRecentPlatformRoles(6);
+  let chance = density * 0.38; // raised from 0.28 — more frequent branching
+  if(recentWide.main >= MAX_CONSECUTIVE_MAIN_PLATFORMS) chance *= 1.6;
+  return Math.random() < chance;
+}
+// Alternates which side gets the "closer/easier" offset each time, so
+// choices don't all read as a mirror-image left/right pair.
+let lastChoiceDirection = 0;
+function getChoiceDirection(){
+  lastChoiceDirection = lastChoiceDirection===0 ? (Math.random()<0.5?-1:1) : -lastChoiceDirection;
+  return lastChoiceDirection;
+}
+// Two raw candidate positions branching from the same jump-off point.
+// Neither is pre-validated here — the caller runs both through
+// canReachPlatform(), the exact same gate every other platform passes
+// through, before ever committing to spawning them.
+// Two deliberately DIFFERENT candidates rather than a symmetric pair: one
+// branch is genuinely harder to land (narrower, further away) and pays off
+// with better loot; the other is more forgiving but still short of the
+// widest normal platforms, so it stays a real decision rather than an
+// obvious "always pick the easy one." Which side gets which role is
+// randomized independently of the left/right alternation.
+function createChoiceCandidates(prevX, prevY, meters){
+  const gapR = gapRangeFor(meters);
+  const gap = randomBetween(gapR.min, gapR.max);
+  const y = prevY - gap;
+  const dir = getChoiceDirection();
+  const riskyIsFirst = Math.random() < 0.5;
+
+  const riskyWidth = randomBetween(64, 84);
+  const riskyOffset = randomBetween(100, 140);
+  const safeWidth = randomBetween(88, 112);
+  const safeOffset = randomBetween(65, 95);
+
+  const risky = { x: wrapClampX(prevX + dir*riskyOffset, riskyWidth/2), y, w: riskyWidth, risky:true };
+  const safe  = { x: wrapClampX(prevX - dir*safeOffset, safeWidth/2), y, w: safeWidth, risky:false };
+  return riskyIsFirst ? [risky, safe] : [safe, risky];
+}
+// Used to pick which of two valid choice candidates continues the
+// generation chain (the other still exists as a real, spawned alternative
+// — this only decides which one the *generator* treats as "the main line"
+// going forward).
+function scorePlatformRoute(candidate, current, meters){
+  let score = 0;
+  const dx = Math.abs(candidate.x - current.x);
+  const dy = Math.abs(current.y - candidate.y);
+  if(dx < 70) score += 20; else if(dx < 130) score += 10;
+  if(dy > 70) score += 10;
+  if(candidate.w < 85) score += 5;
+  score += getDifficulty(meters)*10;
+  return score;
+}
 
 // Shortest horizontal distance accounting for the fact that the player can
 // wrap around either screen edge to approach from the other side.
@@ -1651,6 +1908,10 @@ function resetRun(){
   voidScreenFrac = null;
   blackHoles = [];
   blackHoleSpawnTimer = 0;
+  asteroids = [];
+  asteroidFieldActive = false;
+  asteroidFieldTimer = 0;
+  asteroidSpawnTimer = 0;
   runFinalized = false;
   hardStreak = 0;
   saveFreezeT = 0;
@@ -1661,24 +1922,6 @@ function resetRun(){
   renderAbilityBar();
   updateBuildHud();
   runStats = { metersMax:0, coins:0, coinValue:0, springs:0, bounces:0, broken:0, usedAnySave:false, movingLandings:0, xpEarned:0 };
-  // Every mission is scoped to "this run" (that's what the label always
-  // says), but mission objects persist across runs and progress only ever
-  // ratchets upward — so without an explicit reset here, a mission could
-  // show leftover progress from a completely different run, or (for
-  // counter-based types) sit permanently stuck if its baseline was
-  // captured way back in an earlier run. This is what "Reach Xm without
-  // using a Safety Net" looked buggy: its progress could freeze at a
-  // stale value from a run where a save WAS used, and then just never
-  // move again even in a clean run. Reset progress and (for counter types)
-  // baseline fresh at the start of every run so each mission genuinely
-  // starts at 0 every time.
-  const resetMissionForNewRun = m=>{
-    m.justCompleted = false;
-    m.progress = 0;
-    if(m.type!=='height' && m.type!=='noSaveHeight') m.baseline = 0;
-  };
-  save.missions.forEach(resetMissionForNewRun);
-  save.xpMissions.forEach(resetMissionForNewRun);
 
   let prev = startPlatform;
   while(prev.y > -H*2){
@@ -1741,7 +1984,8 @@ function spawnPlatform(prevX, prevY, meters, prevDir){
     baseX: cand.x, // moving platforms oscillate around this verified-reachable point, never far from it
     dir: cand.x >= prevX ? 1 : -1,
     vx: type==='moving' ? randSign()*(1 + d*2.2) : 0,
-    alive:true, crumbleT:0
+    alive:true, crumbleT:0,
+    role: isRecovery ? PLATFORM_ROLES.RECOVERY : (isHard ? PLATFORM_ROLES.CHALLENGE : PLATFORM_ROLES.MAIN),
   };
   platforms.push(p);
 
@@ -1765,7 +2009,7 @@ function spawnPlatform(prevX, prevY, meters, prevDir){
   // too frequent: 0.02 → 0.016)
   if(meters > 150 && Math.random() < 0.016){
     const def = pickWeighted(CONSUMABLES);
-    powerups.push({ x: cand.x + (Math.random()-0.5)*30, y: cand.y-46, r:12, kind:'consumable', type:def.id, collected:false, bob:Math.random()*Math.PI*2 });
+    powerups.push({ x: cand.x + (Math.random()-0.5)*30, y: cand.y-46, r:17, kind:'consumable', type:def.id, collected:false, bob:Math.random()*Math.PI*2 }); // bigger — more noticeable (was 12)
   }
 
   // Boost orb — the roguelike "build" piece. More common than the rare
@@ -1776,7 +2020,7 @@ function spawnPlatform(prevX, prevY, meters, prevDir){
   // (Spawn rate trimmed 20%: 0.045 → 0.036)
   if(meters > 80 && Math.random() < 0.036){
     const boostDef = pickWeighted(RUN_BOOSTS);
-    powerups.push({ x: cand.x + (Math.random()-0.5)*34, y: cand.y-46, r:12, kind:'boost', boostId:boostDef.id, collected:false, bob:Math.random()*Math.PI*2 });
+    powerups.push({ x: cand.x + (Math.random()-0.5)*34, y: cand.y-46, r:17, kind:'boost', boostId:boostDef.id, collected:false, bob:Math.random()*Math.PI*2 }); // bigger — more noticeable (was 12)
   }
 
   // Occasional decoy: a tempting "fake" platform baited with a rich coin,
@@ -1811,6 +2055,54 @@ function spawnPlatform(prevX, prevY, meters, prevDir){
   return p;
 }
 
+// Orchestrates each jump: usually just calls spawnPlatform() for the
+// single, guaranteed-reachable next platform (unchanged, still the
+// backbone). Occasionally offers a genuine branch instead — two
+// candidates, each independently run through the exact same
+// canReachPlatform() gate as everything else. If only one of the two
+// passes, that's not a real choice anymore, so it's spawned as a normal
+// platform rather than forced into looking like an option. If neither
+// passes, this falls straight through to the standard single-platform
+// path — the route-density system never overrides the safety system.
+function spawnNextPlatform(prevX, prevY, meters, prevDir){
+  if(!shouldCreateChoice(meters)) return spawnPlatform(prevX, prevY, meters, prevDir);
+
+  const [a, b] = createChoiceCandidates(prevX, prevY, meters);
+  const aOk = canReachPlatform(prevX, prevY, a);
+  const bOk = canReachPlatform(prevX, prevY, b);
+
+  const buildChoicePlatform = (cand, role)=>{
+    const pl = { x:cand.x, y:cand.y, w:cand.w, type:'normal', baseX:cand.x, dir: cand.x>=prevX?1:-1, vx:0, alive:true, crumbleT:0, role };
+    platforms.push(pl);
+    if(cand.risky){
+      // The harder branch pays off — a bigger, visibly-glowing coin, plus
+      // a real (if modest) shot at a bonus power-up on top.
+      coins.push({ x: pl.x, y: pl.y-34, r:10, collected:false, bob:Math.random()*Math.PI*2, value:3, risky:true });
+      if(Math.random() < 0.18){
+        const boostDef = pickWeighted(RUN_BOOSTS);
+        powerups.push({ x: pl.x, y: pl.y-56, r:17, kind:'boost', boostId:boostDef.id, collected:false, bob:Math.random()*Math.PI*2 });
+      }
+    } else if(Math.random() < 0.3){
+      coins.push({ x: pl.x, y: pl.y-34, r:9, collected:false, bob:Math.random()*Math.PI*2, value:1, risky:false });
+    }
+    return pl;
+  };
+
+  if(aOk && bOk){
+    const pa = buildChoicePlatform(a, PLATFORM_ROLES.CHOICE);
+    const pb = buildChoicePlatform(b, PLATFORM_ROLES.CHOICE);
+    hardStreak = 0; // a choice is a breather, not a hard jump
+    const scoreA = scorePlatformRoute(a, {x:prevX,y:prevY}, meters);
+    const scoreB = scorePlatformRoute(b, {x:prevX,y:prevY}, meters);
+    return scoreA >= scoreB ? pa : pb; // the other stays spawned as a real, live alternative
+  }
+  if(aOk || bOk){
+    hardStreak = 0;
+    return buildChoicePlatform(aOk ? a : b, PLATFORM_ROLES.MAIN); // only one side worked — not a real choice, just the next platform
+  }
+  return spawnPlatform(prevX, prevY, meters, prevDir); // neither candidate passed — fall back to the normal, always-reachable path
+}
+
 function metersFromCamera(){ return Math.max(0, Math.floor((-camera.y)/8)); }
 
 /* ---------------- Input ---------------- */
@@ -1831,7 +2123,11 @@ function tiltSteer(){
   const mag = Math.abs(tiltRaw);
   if(mag < TILT_DEAD_DEG) return 0;
   const t = Math.min(1, (mag - TILT_DEAD_DEG) / (TILT_FULL_DEG - TILT_DEAD_DEG));
-  return Math.sign(tiltRaw) * Math.pow(t, 1.25);
+  const raw = Math.sign(tiltRaw) * Math.pow(t, 1.25);
+  // Clamped to ±1 so higher sensitivity makes small tilts more responsive
+  // without ever letting tilt exceed the same max speed drag/keys are
+  // capped at.
+  return clamp(raw * sensitivityTiltGain(), -1, 1);
 }
 
 // Maps the device's raw orientation to a portrait-relative left/right tilt,
@@ -2054,6 +2350,7 @@ function bounce(vel, isSpring){
   player.squash = 0.55;
   player.squashVel = 0.12;
   runStats.bounces++;
+  trackAchievement('jumps');
   awardXP(isSpring ? 3 : 1); // regular bounces trickle XP; springs are a bigger, deliberate reward (trimmed from 4)
   spawnBurst(player.x, player.y, isSpring? '#FFC24B':'#ffffff', isSpring?10:6);
   isSpring ? sfx.spring() : sfx.bounce();
@@ -2116,7 +2413,7 @@ function updatePlatforms(dt){
             }
           }
         } else if(p.type==='spring'){
-          bounce(currentJumpVel(), true); runStats.springs++;
+          bounce(currentJumpVel(), true); runStats.springs++; trackAchievement('springs');
         } else if(p.type==='ice'){
           bounce(currentJumpVel(), false);
           player.iceT = 42; // slippery — much slower to steer for a moment
@@ -2125,9 +2422,9 @@ function updatePlatforms(dt){
           player.stickyT = 46; // sluggish — reduced top speed for a moment
         } else {
           bounce(currentJumpVel(), false);
-          if(p.type==='moving') runStats.movingLandings++;
+          if(p.type==='moving'){ runStats.movingLandings++; trackAchievement('movingLandings'); }
         }
-        if(p.type==='crumble'){ p.crumbleT = 16; runStats.broken++; awardXP(2); } // trimmed from 3
+        if(p.type==='crumble'){ p.crumbleT = 16; runStats.broken++; trackAchievement('broken'); awardXP(2); } // trimmed from 3
       }
     }
   });
@@ -2141,7 +2438,7 @@ function updatePlatforms(dt){
   if(chainCandidates.length===0) chainCandidates = platforms;
   let highest = chainCandidates.reduce((a,b)=> a.y<b.y ? a : b, chainCandidates[0]);
   while(highest.y > camera.y - H){
-    highest = spawnPlatform(highest.x, highest.y, meters, highest.dir);
+    highest = spawnNextPlatform(highest.x, highest.y, meters, highest.dir);
   }
 }
 
@@ -2169,6 +2466,7 @@ function updateCoins(dt){
       // double-count every coin, which is exactly what the old code did.
       runStats.coinValue += value;
       runStats.coins++;
+      trackAchievement('coins');
       spawnBurst(co.x, co.y, co.risky ? '#FF6FA0' : '#FFC24B', co.risky?8:5);
       sfx.coin();
     }
@@ -2247,7 +2545,6 @@ function updateCamera(){
   document.getElementById('hud-saves').textContent = player.saves;
   document.getElementById('hud-laser-saves').textContent = player.laserSaves;
   document.getElementById('hud-zone').textContent = getSpaceStage(meters).label;
-  checkMissions(runStats);
   if(meters >= nextBoonMeters) triggerBoon();
 }
 
@@ -2612,6 +2909,13 @@ function drawVoid(){
   ctx.strokeStyle = `rgba(150,100,230,${0.35+0.3*pulse})`;
   ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(0, topY); ctx.lineTo(W, topY); ctx.stroke();
+  // A warning icon on the line itself, same pulsing rhythm as the edge —
+  // reinforces "this is a hazard boundary," not just an ambient visual.
+  ctx.globalAlpha = 0.6 + 0.4*pulse;
+  ctx.font = '20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⚠️', W/2, topY);
   ctx.restore();
 }
 
@@ -2722,6 +3026,111 @@ function drawBlackHoles(){
   });
 }
 
+/* ---------------- Asteroid Field (hazard, appears above 6000m) ----------------
+   Different in kind from a single Meteor: instead of one telegraphed
+   strike, a whole wave of smaller rocks drifts across the screen at once
+   for several seconds — the challenge is finding and holding a gap through
+   a moving field rather than dodging one clean shot. Their travel time in
+   from off-screen is the telegraph; there's no separate warning phase.
+   Sits between Meteor (3500m) and Black Hole (10000m) on the altitude
+   ladder. Rare — long gap between fields, and only one field at a time. */
+const ASTEROID_START_METERS = 6000;
+const ASTEROID_FIELD_DURATION = 10*60; // ~10s of active field once it starts
+const ASTEROID_GAP_MIN = 5*60, ASTEROID_GAP_MAX = 20*60; // 5-20s between fields — down from 25-45s, part of the broader "add more variety" pass
+const ASTEROID_COUNT = 5;
+const ASTEROID_RADIUS = 16;
+const ASTEROID_SPEED = 3.5;
+
+function spawnAsteroidField(){
+  asteroidFieldActive = true;
+  asteroidFieldTimer = ASTEROID_FIELD_DURATION;
+  asteroids = [];
+  const fromLeft = Math.random() < 0.5;
+  for(let i=0; i<ASTEROID_COUNT; i++){
+    asteroids.push({
+      x: fromLeft ? -40-i*95 : W+40+i*95,
+      y: camera.y + H*(0.15 + Math.random()*0.6),
+      vx: (fromLeft?1:-1) * (ASTEROID_SPEED + Math.random()*1.5),
+      vy: (Math.random()-0.5)*0.6,
+      r: ASTEROID_RADIUS * (0.7 + Math.random()*0.6),
+      rotation: Math.random()*Math.PI*2,
+      rotSpeed: (Math.random()-0.5)*0.05,
+    });
+  }
+  showToast('☄️ Asteroid field incoming!');
+}
+
+function updateAsteroidField(dt, meters){
+  if(meters < ASTEROID_START_METERS){
+    if(asteroids.length) asteroids = [];
+    asteroidFieldActive = false;
+    asteroidSpawnTimer = 0;
+    return;
+  }
+  const wdt = worldDt(dt);
+  if(asteroidFieldActive){
+    asteroidFieldTimer -= wdt;
+    asteroids.forEach(a=>{
+      a.x += a.vx*wdt;
+      a.y += a.vy*wdt;
+      a.rotation += a.rotSpeed*wdt;
+      if(mode==='playing' && player.stasisT<=0 && player.invuln<=0 && !a.dead){
+        const dx = a.x-player.x, dy = a.y-player.y;
+        if(Math.hypot(dx,dy) < player.r*0.75 + a.r){
+          if(player.laserSaves>0){
+            player.laserSaves--;
+            player.invuln = 20;
+            runStats.usedAnySave = true;
+            applyBuffLossPenalty();
+            showToast('⚡ Thick Hide deflected an asteroid!');
+            sfx.save();
+            a.dead = true;
+          } else {
+            triggerHazardDeath('asteroid');
+          }
+        }
+      }
+    });
+    asteroids = asteroids.filter(a=> !a.dead && a.x>-150 && a.x<W+150);
+    if(asteroidFieldTimer<=0 || asteroids.length===0){
+      asteroidFieldActive = false;
+      asteroids = [];
+      asteroidSpawnTimer = ASTEROID_GAP_MIN + Math.random()*(ASTEROID_GAP_MAX-ASTEROID_GAP_MIN);
+    }
+  } else {
+    asteroidSpawnTimer -= wdt;
+    if(asteroidSpawnTimer <= 0) spawnAsteroidField();
+  }
+}
+
+function drawAsteroids(){
+  asteroids.forEach(a=>{
+    const y = a.y - camera.y;
+    if(y < -a.r-30 || y > H+a.r+30) return;
+    ctx.save();
+    ctx.translate(a.x, y);
+    ctx.rotate(a.rotation);
+    const rockGrad = ctx.createRadialGradient(-a.r*0.3,-a.r*0.3,1, 0,0,a.r);
+    rockGrad.addColorStop(0, '#9C8A78');
+    rockGrad.addColorStop(0.6, '#6B5C4D');
+    rockGrad.addColorStop(1, '#3E332A');
+    ctx.fillStyle = rockGrad;
+    ctx.beginPath();
+    for(let i=0;i<8;i++){
+      const ang = (i/8)*Math.PI*2;
+      const rr = a.r * (0.8 + hash2D(i, a.r*1000)*0.35);
+      const px = Math.cos(ang)*rr, py = Math.sin(ang)*rr;
+      if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(30,24,18,0.5)';
+    ctx.beginPath(); ctx.arc(-a.r*0.2, -a.r*0.15, a.r*0.22, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(a.r*0.3, a.r*0.25, a.r*0.15, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+}
+
 /* ---------------- Splat (death) animation ---------------- */
 const SPLAT_DURATION = 42; // frames, ~0.7s
 let splatT = 0;
@@ -2739,6 +3148,7 @@ const DEATH_MESSAGES = {
   spikes:  'Impaled!',
   void:    'Swallowed by the Void!',
   blackhole: 'Crushed by a Black Hole!',
+  asteroid: 'Hit by an Asteroid!',
 };
 function getDeathMessage(){ return DEATH_MESSAGES[player.deathReason] || 'Splat!'; }
 function triggerHazardDeath(reason){
@@ -3003,8 +3413,11 @@ function drawEarthAndClouds(meters){
   const earthFade = clamp(1 - meters/520, 0, 1);
   // Clouds gradually appear.
   const cloudRise = smoothstep(0, 520, meters);
-  // Clouds eventually thin out again as we rise above them.
-  const cloudFade = smoothstep(520, 900, meters);
+  // Clouds gradually thin out and fully fade to nothing well before the
+  // layer stops rendering — previously this only reduced opacity by 22%
+  // (still ~78% visible right up to the point everything just vanished),
+  // which read as an abrupt disappearance rather than a fade.
+  const cloudFade = smoothstep(650, 950, meters);
 
   ctx.save();
 
@@ -3065,7 +3478,7 @@ function drawEarthAndClouds(meters){
 
   /* ---------------- CLOUD DECK ---------------- */
   if(cloudRise > 0 && cloudFade < 1.02){
-    const cloudOpacity = clamp(cloudRise * (1 - cloudFade*0.22), 0, 1);
+    const cloudOpacity = clamp(cloudRise * (1 - cloudFade), 0, 1);
 
     // Different depths, sizes and movement directions.
     const layers = [
@@ -3311,6 +3724,19 @@ function render(){
         ctx.fill();
       }
     }
+    if(p.role===PLATFORM_ROLES.CHOICE){
+      // Subtle pulsing outline — enough for the player to subconsciously
+      // register "these are my options" without a literal arrow or label
+      // taking away the decision.
+      const pulse = 0.45 + Math.sin(performance.now()*0.006)*0.15;
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      roundRectPath(ctx, w+8, h+8, 10);
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.globalAlpha = 1;
     ctx.restore();
   });
@@ -3452,6 +3878,7 @@ function render(){
   });
 
   drawBlackHoles();
+  drawAsteroids();
 
   // particles
   particles.forEach(pt=>{
@@ -3533,6 +3960,7 @@ function loop(now){
     updateMeteors(dt, metersFromCamera());
     updateVoid(dt, metersFromCamera());
     updateBlackHoles(dt, metersFromCamera());
+    updateAsteroidField(dt, metersFromCamera());
     checkFall();
     updateAbilityBarUI();
   } else if(mode==='splat'){
@@ -3624,42 +4052,6 @@ function reviveRun(){
 
 /* ---------------- Daily rewards & challenges ---------------- */
 const DAILY_REWARDS = [50,75,100,125,150,200,300];
-function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function yesterdayStr(){ const d=new Date(Date.now()-864e5); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function dailyClaimable(){ return save.daily.lastClaim !== todayStr(); }
-
-const DAILY_CHALLENGE_DEFS = [
-  { type:'height',  make:()=>{ const t=250+50*Math.floor(Math.random()*4); return { t, label:'Reach '+t+'m in one run', reward:40 }; } },
-  { type:'coins',   make:()=>{ const t=25+5*Math.floor(Math.random()*4);   return { t, label:'Collect '+t+' coins today', reward:45 }; } },
-  { type:'runs',    make:()=>{ const t=3+Math.floor(Math.random()*3);      return { t, label:'Finish '+t+' runs today', reward:35 }; } },
-  { type:'springs', make:()=>{ const t=8+2*Math.floor(Math.random()*4);    return { t, label:'Bounce on '+t+' springs today', reward:45 }; } },
-];
-function ensureDailyChallenges(){
-  if(!save.daily.challenges || save.daily.challenges.date !== todayStr()){
-    const defs = [...DAILY_CHALLENGE_DEFS].sort(()=>Math.random()-0.5).slice(0,3);
-    save.daily.challenges = { date: todayStr(), list: defs.map(d=>{ const m=d.make(); return { type:d.type, target:m.t, label:m.label, reward:m.reward, progress:0, done:false }; }) };
-    markDirty();
-  }
-}
-// Called once per finished run (from finalizeEndRun) — cumulative types add
-// this run's totals, height types track the best single run today.
-function progressDailyChallenges(rs){
-  ensureDailyChallenges();
-  save.daily.challenges.list.forEach(c=>{
-    if(c.done) return;
-    if(c.type==='height') c.progress = Math.max(c.progress, rs.metersMax);
-    else if(c.type==='coins') c.progress += rs.coins;
-    else if(c.type==='runs') c.progress += 1;
-    else if(c.type==='springs') c.progress += (rs.springs||0);
-    if(c.progress >= c.target){
-      c.done = true; c.progress = c.target;
-      save.tokens += c.reward;
-      showToast('🎁 Daily challenge complete! +'+c.reward+' tokens');
-      playMissionSfx();
-    }
-  });
-  markDirty();
-}
 function renderDaily(){
   ensureDailyChallenges();
   const claimable = dailyClaimable();
@@ -3677,12 +4069,7 @@ function renderDaily(){
   claimBtn.classList.toggle('btn-primary', claimable);
   claimBtn.classList.toggle('btn-secondary', !claimable);
   document.getElementById('daily-double-btn').classList.toggle('hidden', claimable || save.daily.doubledToday || !(save.daily.lastAmount>0));
-  document.getElementById('daily-challenges').innerHTML = save.daily.challenges.list.map(c=>{
-    const pct = clamp((c.progress/c.target)*100, 0, 100);
-    return '<div class="mission-item"><div class="mission-top"><span>'+(c.done?'✅ ':'')+c.label+'</span><span class="mission-reward"><span class="coin-ic"></span>+'+c.reward+'</span></div>'
-      +'<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>'
-      +'<div class="mission-progress-text">'+Math.min(Math.round(c.progress), c.target)+'/'+c.target+'</div></div>';
-  }).join('');
+  renderTimedMissionList(save.daily.challenges.list, 'daily-challenges');
 }
 
 /* ---------------- Premium shop (simulated IAP) ---------------- */
@@ -3846,12 +4233,13 @@ function finalizeEndRun(){
   const tokensEarned = runStats.coinValue + Math.round(meters*0.035); // trimmed from 0.05 — currency felt too easy to earn
   save.tokens += tokensEarned;
   save.runCount = (save.runCount||0) + 1;
+  trackAchievement('runs');
   const boostIds = Object.keys(runBoostCounts).filter(id=>runBoostCounts[id]>0);
   const totalBoosts = boostIds.reduce((sum,id)=> sum + runBoostCounts[id], 0);
   logRun({ n: save.runCount, height: meters, coins: runStats.coins, boosts: totalBoosts, tokens: tokensEarned, totalAfter: save.tokens });
   let isBest = false;
   if(meters > save.best){ save.best = meters; isBest = true; }
-  checkAchievements(meters);
+  setAchievementStat('bestHeight', meters);
 
   // XP: banked once, same pattern as tokens — everything earned this run
   // (bounces, breaks, power-ups) plus a height bonus, added in one go.
@@ -3887,7 +4275,7 @@ function finalizeEndRun(){
   const dblBtn = document.getElementById('go-double-btn');
   dblBtn.classList.toggle('hidden', tokensEarned <= 0);
   dblBtn.textContent = '🎬 Watch ad: double to +' + (tokensEarned*2) + ' tokens';
-  progressDailyChallenges(runStats);
+  progressTimedMissions(runStats);
 
   hideGameplayOverlays();
   showScreen('gameover-screen');
@@ -4194,49 +4582,82 @@ function renderShop(){
 }
 
 /* ---------------- Missions UI ---------------- */
-let missionsPoolTab = 'gold';
-function renderMissions(){
-  const listEl = document.getElementById('missions-list');
-  const dailyEl = document.getElementById('daily-panel');
-  if(missionsPoolTab==='daily'){
-    listEl.classList.add('hidden');
-    dailyEl.classList.remove('hidden');
-    renderDaily();
-    return;
-  }
-  listEl.classList.remove('hidden');
-  dailyEl.classList.add('hidden');
-  const pool = MISSION_POOLS[missionsPoolTab];
-  const list = listEl;
-  list.innerHTML = '';
-  save[pool.missionsField].forEach(m=>{
-    const item = document.createElement('div'); item.className='mission-item band-'+m.band;
-    const top = document.createElement('div'); top.className='mission-top';
-    const lblWrap = document.createElement('div');
-    const badge = document.createElement('span'); badge.className='tier-badge tier-'+m.band; badge.textContent = pool.bands[m.band].label;
-    const lbl = document.createElement('div'); lbl.className='mission-label'; lbl.textContent = m.label;
-    lblWrap.appendChild(badge); lblWrap.appendChild(lbl);
-    const rw = document.createElement('div'); rw.className='mission-reward';
-    rw.innerHTML = missionsPoolTab==='xp' ? `✨ ${m.reward}` : `<span class="coin-ic"></span>${m.reward}`;
-    top.appendChild(lblWrap); top.appendChild(rw);
-    item.appendChild(top);
-    const track = document.createElement('div'); track.className='progress-track';
-    const fill = document.createElement('div'); fill.className='progress-fill';
-    fill.style.width = clamp((m.progress/m.target)*100,0,100)+'%';
-    track.appendChild(fill);
-    item.appendChild(track);
-    const prog = document.createElement('div'); prog.className='mission-progress-text';
-    prog.textContent = `${Math.floor(m.progress)} / ${m.target}`;
-    item.appendChild(prog);
-    list.appendChild(item);
+let missionView = 'daily';
+// Shared renderer for Daily and Weekly mission lists — both share the same
+// { label, progress, target, done, rewardTokens?, rewardXP } shape.
+function renderTimedMissionList(list, containerId){
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  list.forEach(m=>{
+    const pct = clamp((m.progress/m.target)*100, 0, 100);
+    const rewardText = (m.rewardTokens ? `<span class="coin-ic"></span>+${m.rewardTokens} ` : '') + (m.rewardXP ? `✨+${m.rewardXP}` : '');
+    const item = document.createElement('div'); item.className='mission-item';
+    item.innerHTML = `
+      <div class="mission-top">
+        <span>${m.done ? '✅ ' : ''}${m.label}</span>
+        <span class="mission-reward">${rewardText}</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="mission-progress-text">${Math.floor(m.progress)} / ${m.target}</div>
+    `;
+    container.appendChild(item);
   });
 }
-document.querySelectorAll('.mission-pool-tab').forEach(tab=>{
+function renderAchievements(){
+  const list = document.getElementById('missions-list');
+  list.innerHTML = '';
+  ACHIEVEMENTS.forEach(a=>{
+    const value = save.achievementStats[a.stat] || 0;
+    const card = document.createElement('div'); card.className='mission-item';
+    const completedCount = a.tiers.filter(t=> value >= t.target).length;
+    const next = a.tiers.find(t=> value < t.target);
+    let progressPct = 100;
+    if(next){
+      const previous = completedCount>0 ? a.tiers[completedCount-1].target : 0;
+      progressPct = clamp(((value-previous)/(next.target-previous))*100, 0, 100);
+    }
+    card.innerHTML = `
+      <div class="mission-top">
+        <span>${a.icon} ${a.name}</span>
+        <span>${completedCount}/${a.tiers.length}</span>
+      </div>
+      <div class="mission-progress-text" style="text-align:left;margin-bottom:6px">
+        ${next ? `${value.toLocaleString()} / ${next.target.toLocaleString()}` : '🏆 COMPLETE'}
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width:${progressPct}%"></div></div>
+      <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
+        ${a.tiers.map((tier,i)=>{
+          const done = value >= tier.target;
+          return `<div style="display:flex; justify-content:space-between; font-size:11px; font-weight:800; opacity:${done?1:0.55};">
+            <span>${done?'✅':'🔒'} Tier ${i+1} — ${tier.name}</span>
+            <span>${tier.target.toLocaleString()} · ✨${tier.reward}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
+function renderMissionView(){
+  document.getElementById('daily-panel').classList.toggle('hidden', missionView!=='daily');
+  document.getElementById('weekly-panel').classList.toggle('hidden', missionView!=='weekly');
+  document.getElementById('missions-list').classList.toggle('hidden', missionView!=='achievements');
+  if(missionView==='achievements'){
+    renderAchievements();
+  } else if(missionView==='daily'){
+    ensureDailyChallenges();
+    renderDaily(); // also renders the daily mission list internally
+  } else if(missionView==='weekly'){
+    ensureWeeklyMissions();
+    renderTimedMissionList(save.weeklyMissions.list, 'weekly-missions-list');
+  }
+}
+document.querySelectorAll('.mission-view-tab').forEach(tab=>{
   tab.onclick = ()=>{
     ensureAudio();
-    missionsPoolTab = tab.dataset.pool;
-    document.querySelectorAll('.mission-pool-tab').forEach(t=> t.classList.toggle('active', t===tab));
-    renderMissions();
+    missionView = tab.dataset.missionView;
+    document.querySelectorAll('.mission-view-tab').forEach(t=> t.classList.toggle('active', t===tab));
+    renderMissionView();
   };
 });
 
@@ -4248,10 +4669,10 @@ document.getElementById('resume-btn').onclick = togglePause;
 document.getElementById('quit-btn').onclick = ()=>{ mode='menu'; hideGameplayOverlays(); refreshMenuUI(); showScreen('menu-screen'); };
 document.getElementById('menu-btn-go').onclick = ()=>{ mode='menu'; refreshMenuUI(); showScreen('menu-screen'); };
 
-// Daily is now a tab inside the Missions screen rather than its own
-// button/screen — "missions-btn-menu" below opens Missions, and the Daily
-// tab click handler (registered with the other .mission-pool-tab buttons)
-// calls renderDaily() when selected.
+// Daily is a tab inside the Missions screen alongside Weekly and
+// Achievements — "missions-btn-menu" below opens Missions, and the Daily
+// tab click handler (registered with the other .mission-view-tab buttons)
+// calls renderMissionView() → renderDaily() when selected.
 document.getElementById('daily-claim-btn').onclick = ()=>{
   if(!dailyClaimable()) return;
   ensureAudio();
@@ -4301,7 +4722,15 @@ document.getElementById('shop-back-btn').onclick = ()=>{
   if(mode==='gameover') showScreen('gameover-screen'); else showScreen('menu-screen');
 };
 
-document.getElementById('missions-btn-menu').onclick = ()=>{ renderMissions(); showScreen('missions-screen'); };
+document.getElementById('missions-btn-menu').onclick = ()=>{
+  ensureAudio();
+  ensureDailyChallenges();
+  ensureWeeklyMissions();
+  missionView = 'daily';
+  document.querySelectorAll('.mission-view-tab').forEach((t,i)=> t.classList.toggle('active', i===0));
+  renderMissionView();
+  showScreen('missions-screen');
+};
 document.getElementById('missions-back-btn').onclick = ()=> showScreen('menu-screen');
 
 /* ---------------- Settings UI ---------------- */
@@ -4349,42 +4778,31 @@ function renderStats(){
 
   const content = document.getElementById('stats-content');
   content.innerHTML = '';
-  if(statsTab==='runs'){
-    if(runs.length===0){ content.innerHTML = '<div class="stats-empty">No completed runs yet. Play a round!</div>'; return; }
-    const sorted = [...runs].sort((a,b)=>{
-      const av = statsSortField==='n' ? a.n : statsSortField==='height' ? a.height : statsSortField==='coins' ? a.coins : a.totalAfter;
-      const bv = statsSortField==='n' ? b.n : statsSortField==='height' ? b.height : statsSortField==='coins' ? b.coins : b.totalAfter;
-      return statsSortDesc ? bv-av : av-bv;
-    });
-    const header = document.createElement('div'); header.className='stats-row header';
-    const cols = [ ['n','#'], ['height','Height'], ['coins','Coins'], ['totalAfter','Tokens'] ];
-    cols.forEach(([field,label])=>{
-      const cell = document.createElement('div');
-      cell.textContent = label + (statsSortField===field ? (statsSortDesc?' ▼':' ▲') : '');
-      cell.style.cursor = 'pointer';
-      cell.onclick = ()=>{
-        if(statsSortField===field) statsSortDesc = !statsSortDesc;
-        else { statsSortField = field; statsSortDesc = true; }
-        renderStats();
-      };
-      header.appendChild(cell);
-    });
-    content.appendChild(header);
-    sorted.forEach(r=>{
-      const row = document.createElement('div'); row.className='stats-row';
-      row.innerHTML = `<div class="n">${r.n}</div><div>${r.height}m</div><div>${r.coins}</div><div>+${r.tokens} (${r.totalAfter})</div>`;
-      content.appendChild(row);
-    });
-  } else {
-    ACHIEVEMENTS.forEach(a=>{
-      const unlocked = save.achievements.includes(a.id);
-      const row = document.createElement('div');
-      row.className = 'achievement-row' + (unlocked ? ' unlocked' : '');
-      row.innerHTML = `<div class="ach-icon">${unlocked ? a.icon : '🔒'}</div>
-        <div class="ach-text"><div class="ach-name">${a.name}</div><div class="ach-desc">${a.desc}</div></div>`;
-      content.appendChild(row);
-    });
-  }
+  if(runs.length===0){ content.innerHTML = '<div class="stats-empty">No completed runs yet. Play a round!</div>'; return; }
+  const sorted = [...runs].sort((a,b)=>{
+    const av = statsSortField==='n' ? a.n : statsSortField==='height' ? a.height : statsSortField==='coins' ? a.coins : a.totalAfter;
+    const bv = statsSortField==='n' ? b.n : statsSortField==='height' ? b.height : statsSortField==='coins' ? b.coins : b.totalAfter;
+    return statsSortDesc ? bv-av : av-bv;
+  });
+  const header = document.createElement('div'); header.className='stats-row header';
+  const cols = [ ['n','#'], ['height','Height'], ['coins','Coins'], ['totalAfter','Tokens'] ];
+  cols.forEach(([field,label])=>{
+    const cell = document.createElement('div');
+    cell.textContent = label + (statsSortField===field ? (statsSortDesc?' ▼':' ▲') : '');
+    cell.style.cursor = 'pointer';
+    cell.onclick = ()=>{
+      if(statsSortField===field) statsSortDesc = !statsSortDesc;
+      else { statsSortField = field; statsSortDesc = true; }
+      renderStats();
+    };
+    header.appendChild(cell);
+  });
+  content.appendChild(header);
+  sorted.forEach(r=>{
+    const row = document.createElement('div'); row.className='stats-row';
+    row.innerHTML = `<div class="n">${r.n}</div><div>${r.height}m</div><div>${r.coins}</div><div>+${r.tokens} (${r.totalAfter})</div>`;
+    content.appendChild(row);
+  });
 }
 document.getElementById('stats-btn-menu').onclick = ()=>{ renderStats(); showScreen('stats-screen'); };
 document.getElementById('stats-back-btn').onclick = ()=> showScreen('menu-screen');
@@ -4405,6 +4823,7 @@ const PLATFORM_LEGEND = [
   { swatch:'#E3F7FF', border:'#8FD9F5', name:'Ice',       desc:'Slippery! Hard to steer for a moment after landing.' },
   { swatch:'#EAE0FF', border:'#B79CFF', name:'Sticky',    desc:'Slows you way down for a moment after landing.' },
   { swatch:'#FFF6E8', border:'#E3C79A', name:'Fake',      desc:'Looks almost normal... but it\'s not. Watch for the shimmer!' },
+  { swatch:'#FFFFFF', border:'#FFFFFF', name:'Route Choice', desc:'A soft white glow around two nearby platforms means a real branch — both genuinely reachable. One side is smaller and further (harder, better loot); the other is more forgiving but still takes real aim.' },
   { swatch:'#3D2B56', border:'#FF3B5C', name:'Spikes',    desc:'Ouch. Obviously spiky and easy to avoid, but tempts you with a big coin.' },
 ];
 const PICKUP_LEGEND = [
@@ -4426,6 +4845,7 @@ const HAZARD_LEGEND = [
   { icon:'☄️', name:'Meteor',  desc:`Shows up above ${METEOR_START_METERS}m. Watch for the ⚠️. That's exactly where it's about to fly through, so just move! Thick Hide can save you, Star Shield can't.` },
   { icon:'🔺', name:'Spikes',  desc:`Shows up above 900m. Obviously spiky and always easy to avoid. It just tempts you with a coin. Thick Hide can save you, Star Shield can't.` },
   { icon:'🌑', name:'Void',    desc:`Above ${VOID_START_METERS}m, a rising darkness comes and goes on its own random rhythm, anywhere from 5 seconds to a minute at a time. When it's active it rises from below. Stall too long and it catches up. Thick Hide can pull you out, Star Shield can't.` },
+  { icon:'☄️', name:'Asteroid Field', desc:`Appears above ${ASTEROID_START_METERS}m. A wave of rocks drifts across the screen for about 10 seconds, showing up every 5-20 seconds. Find the gap and hold it. Thick Hide can deflect one hit, Star Shield can't.` },
   { icon:'🕳️', name:'Black Hole', desc:`Appears above ${BLACKHOLE_START_METERS}m. Doesn't kill on touch, it pulls. Get close and it drags you in harder the nearer you get, with a small lethal core at the center. Baited with coins around the edge if you want to risk it. Thick Hide can tear you free, Star Shield can't.` },
   { icon:'💀', name:'Falling', desc:`Miss every platform and it's over, unless a Safety Net or Star Shield catches you (it won't launch you back up, you still have to find a platform). Heads up: using ANY save costs you 25% of your current boosts.` },
 ];
