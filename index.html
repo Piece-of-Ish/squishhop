@@ -1361,18 +1361,24 @@ function drawBlob(c, x, y, r, scaleX, scaleY, colors, face, rotation, shape, dec
   }
   // Rebuild the path for the rim stroke — clip()/restore() above can leave
   // the current path in a browser-dependent state, so re-issuing it here
-  // keeps the stroke reliable regardless of which branch just ran.
-  if(shape==='cube'){
-    const s = r*1.68;
-    const skinCfg = decorId && SKIN_CORNER_RADIUS[decorId];
-    roundRectPath(c, s, s, s*(skinCfg!==undefined ? skinCfg : 0.24));
-  } else {
-    c.beginPath();
-    c.arc(0,0,r,0,Math.PI*2);
+  // keeps the stroke reliable regardless of which branch just ran. Skipped
+  // entirely when real art is showing: the rim outline and the procedural
+  // face below are both part of the fallback look, and real artwork
+  // should stand on its own rather than have a leftover circle/smile
+  // drawn on top of it.
+  if(!asset){
+    if(shape==='cube'){
+      const s = r*1.68;
+      const skinCfg = decorId && SKIN_CORNER_RADIUS[decorId];
+      roundRectPath(c, s, s, s*(skinCfg!==undefined ? skinCfg : 0.24));
+    } else {
+      c.beginPath();
+      c.arc(0,0,r,0,Math.PI*2);
+    }
+    c.lineWidth = 2.5/Math.max(scaleX,0.4);
+    c.strokeStyle = 'rgba(255,255,255,0.5)';
+    c.stroke();
   }
-  c.lineWidth = 2.5/Math.max(scaleX,0.4);
-  c.strokeStyle = 'rgba(255,255,255,0.5)';
-  c.stroke();
   const mat = materialFor(decorId);
   c.beginPath();
   c.ellipse(-r*0.32, -r*0.4, r*0.32*(mat.highlightSize/0.24), r*0.2*(mat.highlightSize/0.24), -0.5, 0, Math.PI*2);
@@ -1380,6 +1386,7 @@ function drawBlob(c, x, y, r, scaleX, scaleY, colors, face, rotation, shape, dec
   c.fill();
   if(decorId && SKIN_DECORATORS[decorId]) SKIN_DECORATORS[decorId](c, r);
 
+  if(!asset){
   c.fillStyle = 'rgba(61,43,86,0.75)';
   c.strokeStyle = 'rgba(61,43,86,0.75)';
   if(face==='splat'){
@@ -1410,6 +1417,7 @@ function drawBlob(c, x, y, r, scaleX, scaleY, colors, face, rotation, shape, dec
     c.lineCap='round';
     c.strokeStyle = 'rgba(61,43,86,0.55)';
     c.stroke();
+  }
   }
   c.restore();
 }
