@@ -193,7 +193,7 @@
   .premium-note{grid-column:1 / -1; text-align:center;}
   .shop-item{background:#fff; border-radius:18px; padding:12px; display:flex; flex-direction:column; align-items:center; gap:6px; box-shadow:0 3px 10px rgba(61,43,86,0.10); border:2px solid transparent;}
   .shop-item.equipped{border-color:var(--secondary);}
-  .shop-item canvas{width:56px; height:56px;}
+  .shop-item canvas{width:76px; height:76px;}
   .shop-item .name{font-weight:800; font-size:12.5px; text-align:center;}
   .shop-item .price{font-size:11px; font-weight:800; color:var(--gold-dark); display:flex; align-items:center; gap:4px;}
   .shop-item .level-hint{font-size:9px; font-weight:800; color:var(--ink-soft); text-align:center;}
@@ -3688,7 +3688,7 @@ let adDoubleClaimedThisRun = false; // authoritative guard — checked at click 
 function premiumGridItem(opt){
   const item = document.createElement('div');
   item.className = 'shop-item' + (opt.equipped ? ' equipped' : '');
-  const cv = document.createElement('canvas'); cv.width=56; cv.height=56;
+  const cv = document.createElement('canvas'); cv.width=76; cv.height=76;
   opt.drawPreview(cv.getContext('2d'));
   item.appendChild(cv);
   const nm = document.createElement('div'); nm.className='name'; nm.textContent = opt.name;
@@ -3719,7 +3719,7 @@ function renderPremium(content){
   content.appendChild(premiumGridItem({
     name:'Squish Hop Premium', price:'$2.99',
     owned: save.premium.removeAds,
-    drawPreview: cctx=>{ cctx.font='30px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cctx.textAlign='center'; cctx.textBaseline='middle'; cctx.fillText('👑', 28, 30); },
+    drawPreview: cctx=>{ cctx.font='41px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cctx.textAlign='center'; cctx.textBaseline='middle'; cctx.fillText('👑', 38, 40); },
     buy: ()=>{ save.premium.removeAds = true; if(!save.unlockedSkins.includes('golden')) save.unlockedSkins.push('golden'); logPurchase('Squish Hop Premium', 0, 'iap'); }
   }));
 
@@ -3727,7 +3727,7 @@ function renderPremium(content){
     const owned = save.unlockedSkins.includes(sk.id);
     content.appendChild(premiumGridItem({
       name: sk.name, price: sk.price, owned,
-      drawPreview: cctx=> drawBlob(cctx, 28, 30, 20, 1,1, sk.colors, 'normal', 0, sk.shape, sk.id),
+      drawPreview: cctx=> drawBlob(cctx, 38, 40, 27, 1,1, sk.colors, 'normal', 0, sk.shape, sk.id),
       equipAction: owned ? ()=>{ save.equippedSkin = sk.id; markDirty(); renderShop(); drawPreview(); } : null,
       equipped: save.equippedSkin===sk.id,
       buy: ()=>{ save.unlockedSkins.push(sk.id); save.equippedSkin = sk.id; logPurchase(sk.name, 0, 'iap'); }
@@ -3737,7 +3737,7 @@ function renderPremium(content){
   content.appendChild(premiumGridItem({
     name:'Aurora Trail', price:'$1.99',
     owned: save.unlockedEffects.includes('aurora'),
-    drawPreview: cctx=>{ cctx.font='26px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cctx.textAlign='center'; cctx.textBaseline='middle'; cctx.fillText('🌠', 28, 30); },
+    drawPreview: cctx=>{ cctx.font='35px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cctx.textAlign='center'; cctx.textBaseline='middle'; cctx.fillText('🌠', 38, 40); },
     equipAction: save.unlockedEffects.includes('aurora') ? ()=>{ save.equippedEffect='aurora'; markDirty(); renderShop(); } : null,
     equipped: save.equippedEffect==='aurora',
     buy: ()=>{ save.unlockedEffects.push('aurora'); save.equippedEffect='aurora'; logPurchase('Aurora Trail', 0, 'iap'); }
@@ -3980,7 +3980,7 @@ function renderCosmeticGrid(items, unlockedList, getEquipped, setEquipped, kind,
     const equipped = getEquipped()===it.id;
     const item = document.createElement('div');
     item.className = 'shop-item' + (equipped?' equipped':'');
-    const cv = document.createElement('canvas'); cv.width=56; cv.height=56;
+    const cv = document.createElement('canvas'); cv.width=76; cv.height=76;
     drawPreview(cv.getContext('2d'), it);
     item.appendChild(cv);
     const nm = document.createElement('div'); nm.className='name'; nm.textContent = it.name;
@@ -4025,13 +4025,13 @@ function renderShop(){
 
   if(activeTab==='skins'){
     renderCosmeticGrid(SKINS.filter(s=>!s.premium), save.unlockedSkins, ()=>save.equippedSkin, id=>{ save.equippedSkin=id; }, 'skin',
-      (cctx, sk)=> drawBlob(cctx, 28, 30, 20, 1,1, sk.colors, 'normal', 0, sk.shape, sk.id));
+      (cctx, sk)=> drawBlob(cctx, 38, 40, 27, 1,1, sk.colors, 'normal', 0, sk.shape, sk.id));
   } else if(activeTab==='effects'){
     renderCosmeticGrid(EFFECTS.filter(e=>!e.premium), save.unlockedEffects, ()=>save.equippedEffect, id=>{ save.equippedEffect=id; }, 'effect',
       (cctx, ef)=>{
-        cctx.font='26px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cctx.textAlign='center'; cctx.textBaseline='middle';
+        cctx.font='35px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cctx.textAlign='center'; cctx.textBaseline='middle';
         const icon = ef.id==='sparkle'?'✨':ef.id==='rainbow'?'🌈':ef.id==='bubbles'?'🫧':'⚪';
-        cctx.fillText(icon, 28, 30);
+        cctx.fillText(icon, 38, 40);
       });
   } else if(activeTab==='premium'){
     renderPremium(content);
