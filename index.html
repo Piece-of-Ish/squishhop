@@ -147,6 +147,13 @@
   .screen{position:absolute; inset:0; z-index:10; display:flex; align-items:center; justify-content:center; background:rgba(61,43,86,0.28); backdrop-filter:blur(2px); padding:20px;}
   .screen.hidden{display:none;}
   .panel{width:100%; max-width:360px; background:var(--card); border:1px solid var(--card-border); border-radius:32px; padding:28px 24px; box-shadow:0 20px 50px var(--shadow); display:flex; flex-direction:column; align-items:center; gap:14px; max-height:88vh; overflow:auto;}
+  .tut-icon{font-size:52px; line-height:1;}
+  .tut-desc{font-size:15px; font-weight:700; color:var(--ink); text-align:center; line-height:1.5;}
+  .tut-legend-row{display:flex; flex-direction:column; gap:8px; width:100%;}
+  .tut-legend-item{display:flex; align-items:center; gap:10px; background:#fff; border-radius:14px; padding:8px 12px; box-shadow:0 2px 6px rgba(61,43,86,0.08); text-align:left;}
+  .tut-legend-item .tli-icon{font-size:20px; flex:0 0 auto; width:26px; text-align:center;}
+  .tut-legend-item .tli-text{font-size:12.5px; font-weight:700; color:var(--ink);}
+  .tut-skip{font-size:12px; font-weight:700; color:var(--ink-soft); text-decoration:underline; cursor:pointer; margin-top:2px;}
   .panel-large{max-width:420px;}
   .title{font-size:34px; color:var(--primary-dark); letter-spacing:0.5px; text-shadow:0 2px 0 rgba(255,255,255,0.6);}
   .panel h2{font-size:24px; color:var(--ink);}
@@ -364,6 +371,17 @@
     </div>
   </div>
 
+  <div id="tutorial-screen" class="screen hidden">
+    <div class="panel">
+      <div class="tut-icon" id="tut-icon">🫧</div>
+      <h2 id="tut-title">Welcome!</h2>
+      <div class="tut-desc" id="tut-desc"></div>
+      <div id="tut-legend-row" class="tut-legend-row hidden"></div>
+      <button class="btn btn-primary" id="tut-next-btn">Next</button>
+      <div class="tut-skip" id="tut-skip-btn">Skip Tutorial</div>
+    </div>
+  </div>
+
   <div id="continue-screen" class="screen hidden">
     <div class="panel">
       <h2 id="cont-title">Run Over</h2>
@@ -551,6 +569,7 @@ function defaultSave(){
   const draft = {
     tokens: 0,
     best: 0,
+    tutorialComplete: false,
     equippedSkin: 'bubblegum',
     equippedEffect: 'none',
     unlockedSkins: ['bubblegum'],
@@ -583,6 +602,10 @@ async function loadSave(){
   try{
     const r = await window.storage.get(SAVE_KEY);
     save = r && r.value ? JSON.parse(r.value) : defaultSave();
+    // Existing players (a real save already existed) never see the
+    // tutorial, even if this field predates it — only a genuinely fresh
+    // save starts with tutorialComplete already false from defaultSave().
+    if(typeof save.tutorialComplete !== 'boolean') save.tutorialComplete = true;
     if(!save.settings){ save.settings = { ...DEFAULT_SETTINGS }; }
     if(typeof save.settings.tiltControls !== 'boolean'){ save.settings.tiltControls = true; }
     if(!save.daily){ save.daily = { lastClaim:'', streak:0, lastAmount:0, doubledToday:false, challenges:null }; }
@@ -1490,7 +1513,7 @@ function drawPreview(){
 
 const GRAVITY = 0.85;
 let mode = 'menu'; // menu | playing | paused | gameover
-let player = { x:0, y:0, vx:0, vy:0, r:24, squash:1, squashVel:0, saves:0, invuln:0 };
+let player = { x:0, y:0, prevY:0, vx:0, vy:0, r:24, squash:1, squashVel:0, saves:0, invuln:0 };
 let camera = { y:0 };
 let platforms = [];
 let coins = [];
@@ -1707,7 +1730,7 @@ function resetRun(){
   const startY = H*0.62;
   const startPlatform = { x: W/2, y: startY, w:96, type:'normal', vx:0, baseX:W/2, dir:0, alive:true, crumbleT:0 };
   player = {
-    x: W/2, y: startY - 20, vx:0, vy:0, r:24, squash:1, squashVel:0,
+    x: W/2, y: startY - 20, prevY: startY - 20, vx:0, vy:0, r:24, squash:1, squashVel:0,
     saves: Math.min(save.upgrades.safety, MAX_RUN_SAVES), laserSaves: Math.min(save.upgrades.laserShield, MAX_RUN_SAVES), shieldT:0,
     iceT:0, stickyT:0, boostT:0, invuln:0, doubleJumpCooldownT:0,
     stasisT:0, overdriveT:0, abilityCooldowns:{}, deathReason:'falling',
@@ -2029,6 +2052,7 @@ function collectEverythingOnScreen(){
 }
 
 function updatePlayer(dt){
+  player.prevY = player.y; // tracked so platform collision can do a swept check — catches fast falls that would otherwise skip clean over a platform's thin landing band in one frame (tunneling)
   if(player.stasisT > 0){
     player.stasisT -= dt;
     player.vx = 0; player.vy = 0;
@@ -2109,10 +2133,21 @@ function updatePlatforms(dt){
       if(p.crumbleT<=0) p.alive=false;
     }
     const screenY = p.y - camera.y;
+    // Collision uses a SWEPT check, not just "is the final position inside
+    // the band" — a fast enough fall (a lag spike, a big platform gap,
+    // anything that produces a larger dt for one frame) can otherwise move
+    // the player clean across the ~22px landing band in a single frame,
+    // skipping the check entirely and reading as "falling straight through
+    // a platform with nothing else going on." Comparing against where the
+    // player's bottom edge WAS last frame catches that: if it crossed the
+    // band at any point between last frame and this one, it still counts,
+    // even if the final position has already overshot past it.
     if(p.alive && player.vy>0){
       const px = player.x, pyBottom = player.y + player.r*0.75;
+      const prevPyBottom = player.prevY + player.r*0.75;
+      const bandTop = p.y - 8, bandBottom = p.y + 14;
       const withinX = px > p.x - p.w/2 - 6 && px < p.x + p.w/2 + 6;
-      const withinY = pyBottom > p.y - 8 && pyBottom < p.y + 14;
+      const withinY = (pyBottom > bandTop && pyBottom < bandBottom) || (prevPyBottom < bandBottom && pyBottom >= bandTop);
       if(withinX && withinY){
         if(p.type==='fake'){
           p.alive = false;
@@ -3658,6 +3693,7 @@ function hideGameplayOverlays(){
   document.getElementById('move-buttons').classList.add('hidden');
 }
 
+let tutorialRunActive = false; // true only during the player's very first run, so finalizeEndRun knows to show the post-run tutorial once
 function startGame(){
   resetRun();
   mode = 'playing';
@@ -3667,6 +3703,79 @@ function startGame(){
   document.getElementById('ability-bar').classList.toggle('hidden', save.equippedAbilities.length===0);
   updateBuildHud();
 }
+
+/* ============================================================
+   FIRST-TIME TUTORIAL
+   Shown once, on a genuinely fresh save only (existing players are
+   migrated straight past it in loadSave()). Two short sequences of
+   simple info cards — one before the player's first run, one after it
+   ends — built from plain data so adding/editing steps never touches
+   the screen logic itself.
+   ============================================================ */
+const TUTORIAL_INTRO_STEPS = [
+  { icon:'🫧', title:'Welcome to Squish Hop!', desc:'Bounce upward as high as you can. The higher you climb, the more you earn.' },
+  { icon:'🕹️', title:'Controls', desc:"Tilt your phone to steer, or use the on-screen buttons if tilt is off. Just don't stop climbing!" },
+  { icon:'🟢', title:'Platforms', desc:'Most platforms are safe to land on. A few are special — watch for these:', legend:[
+    { icon:'🟡', text:'Spring — an extra-big bounce' },
+    { icon:'🔵', text:'Moving — drifts side to side' },
+    { icon:'🟠', text:'Crumbling — breaks after you land' },
+    { icon:'⚪', text:'Fake — looks normal, but vanishes. Watch for the shimmer!' },
+  ]},
+  { icon:'🪙', title:'Coins & Power-ups', desc:'Grab coins to earn Tokens. Glowing power-ups give temporary boosts, or extra saves if you fall or hit a hazard.' },
+  { icon:'🚀', title:'Ready?', desc:"Let's try your first run!", buttonText:'Start Run' },
+];
+const TUTORIAL_POSTRUN_STEPS = [
+  { icon:'🎉', title:'Nice first run!', desc:'The coins you collected turned into Tokens — your permanent currency.' },
+  { icon:'🛒', title:'The Shop', desc:'Spend Tokens on Upgrade Points, then spend those points to permanently boost your Jump, Speed, and more.' },
+  { icon:'👤', title:'Squishies', desc:'Collect and equip different Squishies — cosmetic skins for your character. Some unlock free by leveling up, some cost Tokens.' },
+  { icon:'✅', title:"You're all set!", desc:'Explore the Shop whenever you want. Good luck out there!', buttonText:"Let's go!" },
+];
+let tutorialSteps = [];
+let tutorialStepIndex = 0;
+let tutorialOnComplete = null;
+function renderTutorialStep(){
+  const step = tutorialSteps[tutorialStepIndex];
+  document.getElementById('tut-icon').textContent = step.icon;
+  document.getElementById('tut-title').textContent = step.title;
+  document.getElementById('tut-desc').textContent = step.desc;
+  const legendRow = document.getElementById('tut-legend-row');
+  if(step.legend){
+    legendRow.classList.remove('hidden');
+    legendRow.innerHTML = step.legend.map(l=> `<div class="tut-legend-item"><span class="tli-icon">${l.icon}</span><span class="tli-text">${l.text}</span></div>`).join('');
+  } else {
+    legendRow.classList.add('hidden');
+    legendRow.innerHTML = '';
+  }
+  document.getElementById('tut-next-btn').textContent = step.buttonText || 'Next';
+}
+function startTutorialSequence(steps, onComplete){
+  tutorialSteps = steps;
+  tutorialStepIndex = 0;
+  tutorialOnComplete = onComplete;
+  renderTutorialStep();
+  showScreen('tutorial-screen');
+}
+document.getElementById('tut-next-btn').onclick = ()=>{
+  ensureAudio();
+  tutorialStepIndex++;
+  if(tutorialStepIndex >= tutorialSteps.length){
+    const cb = tutorialOnComplete;
+    tutorialOnComplete = null;
+    if(cb) cb();
+  } else {
+    renderTutorialStep();
+  }
+};
+document.getElementById('tut-skip-btn').onclick = ()=>{
+  ensureAudio();
+  const wasIntro = tutorialSteps === TUTORIAL_INTRO_STEPS;
+  save.tutorialComplete = true;
+  markDirty();
+  tutorialOnComplete = null;
+  tutorialRunActive = false;
+  showScreen(wasIntro ? 'menu-screen' : 'gameover-screen');
+  refreshMenuUI();
+};
 
 function renderAbilityBar(){
   const btns = document.querySelectorAll('.ability-btn');
@@ -3772,7 +3881,16 @@ function finalizeEndRun(){
   progressTimedMissions(runStats);
 
   hideGameplayOverlays();
-  showScreen('gameover-screen');
+  if(tutorialRunActive){
+    tutorialRunActive = false;
+    startTutorialSequence(TUTORIAL_POSTRUN_STEPS, ()=>{
+      save.tutorialComplete = true;
+      markDirty();
+      showScreen('gameover-screen');
+    });
+  } else {
+    showScreen('gameover-screen');
+  }
   refreshMenuUI();
 }
 
@@ -4138,7 +4256,7 @@ document.getElementById('play-btn').onclick = ()=>{ ensureAudio(); requestTiltPe
 document.getElementById('retry-btn').onclick = ()=>{ ensureAudio(); requestTiltPermission(); startGame(); };
 document.getElementById('pause-btn').onclick = togglePause;
 document.getElementById('resume-btn').onclick = togglePause;
-document.getElementById('quit-btn').onclick = ()=>{ mode='menu'; hideGameplayOverlays(); refreshMenuUI(); showScreen('menu-screen'); };
+document.getElementById('quit-btn').onclick = ()=>{ mode='menu'; tutorialRunActive=false; hideGameplayOverlays(); refreshMenuUI(); showScreen('menu-screen'); };
 document.getElementById('menu-btn-go').onclick = ()=>{ mode='menu'; refreshMenuUI(); showScreen('menu-screen'); };
 
 document.getElementById('daily-claim-btn').onclick = ()=>{
@@ -4523,6 +4641,12 @@ async function boot(){
   refreshMenuUI();
   resetRun(); // populate an idle scene behind the menu; mode stays 'menu' so it doesn't play
   drawPreview();
+  if(!save.tutorialComplete){
+    startTutorialSequence(TUTORIAL_INTRO_STEPS, ()=>{
+      tutorialRunActive = true;
+      startGame();
+    });
+  }
   requestAnimationFrame(loop);
 }
 boot();
